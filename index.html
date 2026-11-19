@@ -1,0 +1,2800 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Explorador Anatómico del Corazón 3D & WebXR</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * {
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: radial-gradient(circle at 48% 36%, #18202c 0%, #0b0f17 62%, #05070b 100%);
+      font-family: 'Inter', sans-serif;
+      color: #f1f5f9;
+    }
+    #canvas-container {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      touch-action: none;
+    }
+    ::-webkit-scrollbar {
+      width: 5px;
+    }
+    ::-webkit-scrollbar-track {
+      background: rgba(15, 23, 42, 0.35);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(148, 163, 184, 0.35);
+      border-radius: 9999px;
+    }
+    input[type="range"] {
+      -webkit-appearance: none;
+      appearance: none;
+      background: rgba(51, 65, 85, 0.75);
+      height: 6px;
+      border-radius: 9999px;
+      outline: none;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #38bdf8;
+      border: 2px solid #0f172a;
+      box-shadow: 0 0 12px rgba(56, 189, 248, 0.75);
+      cursor: pointer;
+    }
+    @keyframes fadeSlideUp {
+      from { opacity: 0; transform: translate(-50%, 12px); }
+      to { opacity: 1; transform: translate(-50%, 0); }
+    }
+    .toast-visible {
+      animation: fadeSlideUp 0.25s ease-out forwards;
+    }
+    /* Customize Three.js XRButton to match our dark clinical UI */
+    #xr-button-slot button {
+      position: static !important;
+      width: auto !important;
+      bottom: auto !important;
+      left: auto !important;
+      right: auto !important;
+      padding: 8px 16px !important;
+      border-radius: 1rem !important;
+      border: 1px solid rgba(56, 189, 248, 0.55) !important;
+      background: linear-gradient(135deg, rgba(2, 132, 199, 0.92), rgba(29, 78, 216, 0.92)) !important;
+      color: #ffffff !important;
+      font-family: 'Inter', sans-serif !important;
+      font-size: 12px !important;
+      font-weight: 700 !important;
+      letter-spacing: 0.03em !important;
+      opacity: 1 !important;
+      box-shadow: 0 8px 24px rgba(14, 165, 233, 0.32) !important;
+      backdrop-filter: blur(12px) !important;
+      cursor: pointer !important;
+      transition: transform 0.15s ease, filter 0.15s ease !important;
+    }
+    #xr-button-slot button:hover {
+      filter: brightness(1.12);
+      transform: translateY(-1px);
+    }
+  </style>
+
+  <!-- Three.js ES Modules Import Map via CDN -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+
+  <!-- 3D & WebXR Viewport -->
+  <div id="canvas-container"></div>
+
+  <!-- Hidden file input for custom .GLB/.GLTF sculpted models -->
+  <input id="glb-file-input" type="file" accept=".glb,.gltf" class="hidden" />
+
+  <!-- Non-blocking Toast Notification (replaces alert/confirm) -->
+  <div id="toast-box" class="hidden fixed top-20 left-1/2 -translate-x-1/2 z-50 bg-slate-900/95 border border-sky-400/55 text-slate-100 text-xs sm:text-sm font-medium px-4 py-2.5 rounded-2xl shadow-2xl backdrop-blur-xl max-w-md text-center"></div>
+
+  <!-- Top Clinical Header -->
+  <header class="fixed top-3 left-3 right-3 z-20 flex flex-wrap items-center justify-between gap-2.5 pointer-events-none">
+    <div class="pointer-events-auto bg-slate-950/78 backdrop-blur-xl border border-slate-700/60 rounded-2xl px-4 py-2.5 shadow-2xl max-w-md">
+      <div class="flex items-center gap-2.5">
+        <span id="header-pulse" class="inline-block w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse shadow-[0_0_10px_rgba(244,63,94,0.95)]"></span>
+        <h1 class="text-sm sm:text-base font-bold tracking-tight text-white">
+          Anatomía Cardíaca 3D <span class="text-sky-400 font-medium">· WebXR</span>
+        </h1>
+      </div>
+      <p class="text-[11px] sm:text-xs text-slate-300 mt-0.5 leading-snug">
+        <span class="hidden sm:inline">Arrastra cualquier capa para desmontarla. Rueda/clic derecho para zoom y rotación 360°.</span>
+        <span class="sm:hidden">Arrastra piezas para separarlas. Dos dedos para rotar/zoom.</span>
+      </p>
+    </div>
+
+    <!-- Right Header Controls: Custom .GLB Loader & Native Meta Quest XRButton -->
+    <div class="pointer-events-auto flex flex-wrap items-center gap-2">
+      <button id="btn-upload-glb" class="px-3.5 py-2 rounded-2xl bg-slate-950/82 hover:bg-indigo-950/90 text-indigo-200 border border-indigo-500/45 hover:border-indigo-400 backdrop-blur-xl shadow-xl text-xs font-semibold transition flex items-center gap-2 cursor-pointer">
+        <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+        </svg>
+        <span>Cargar .GLB propio</span>
+      </button>
+
+      <button id="btn-restore-default" class="hidden px-3 py-2 rounded-2xl bg-slate-900/85 hover:bg-slate-800 text-slate-200 border border-slate-600/60 backdrop-blur-xl shadow-xl text-xs font-semibold transition cursor-pointer">
+        Corazón Base
+      </button>
+
+      <!-- Three.js XRButton mounts here -->
+      <div id="xr-button-slot" class="flex items-center"></div>
+    </div>
+  </header>
+
+  <!-- Right Side Anatomical Info & Layer Control Card -->
+  <aside id="info-panel" class="fixed top-20 right-3 z-20 w-[calc(100%-1.5rem)] sm:w-80 md:w-96 bg-slate-950/78 backdrop-blur-2xl border border-slate-700/65 rounded-2xl p-4 sm:p-5 shadow-2xl transition-all duration-300 max-h-[38vh] sm:max-h-[68vh] overflow-y-auto">
+    <div class="flex items-start justify-between gap-2">
+      <div class="min-w-0">
+        <span id="part-layer-badge" class="inline-block text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/35">
+          Capa 2 · Miocardio y Vasos
+        </span>
+        <h2 id="part-title" class="text-base sm:text-lg font-bold text-white mt-1.5 leading-snug">
+          Pared Anterior y Red Coronaria
+        </h2>
+      </div>
+      <span id="part-flow-badge" class="shrink-0 text-[10px] sm:text-[11px] font-semibold px-2.5 py-1 rounded-xl bg-slate-900/90 text-rose-300 border border-rose-500/40">
+        Mixta (Arterias/Venas)
+      </span>
+    </div>
+
+    <div class="mt-3 pt-3 border-t border-slate-800/80">
+      <p class="text-[10px] uppercase tracking-widest text-slate-400 font-semibold mb-1">Función Fisiológica</p>
+      <p id="part-function" class="text-xs sm:text-sm text-slate-200 leading-relaxed"></p>
+    </div>
+
+    <!-- Progressive Layer Dissection Slider ("Modo Capas" 1 to 5) -->
+    <div class="mt-4 pt-3 border-t border-slate-800/80">
+      <div class="flex items-center justify-between mb-1.5">
+        <label for="layer-slider" class="text-xs font-semibold text-slate-200">Modo Capas (1–5)</label>
+        <span id="layer-step-text" class="text-xs font-bold text-sky-400">Capa 1–5 · Completo</span>
+      </div>
+      <input id="layer-slider" type="range" min="1" max="5" value="5" step="1" class="w-full" />
+      <div class="grid grid-cols-5 text-[9px] sm:text-[10px] text-slate-400 mt-1.5 text-center font-medium">
+        <span>Válvulas</span>
+        <span>Cavidades</span>
+        <span>Vasos</span>
+        <span>Coronarias</span>
+        <span>Pericardio</span>
+      </div>
+    </div>
+
+    <!-- Quick Toggle Pills for All 5 Anatomical Parts -->
+    <div class="mt-3 flex flex-wrap gap-1.5">
+      <button data-part-id="pericardio" class="part-pill px-2.5 py-1 rounded-xl text-[11px] font-semibold bg-cyan-500/15 text-cyan-200 border border-cyan-500/35 hover:bg-cyan-500/30 transition cursor-pointer">
+        Pericardio
+      </button>
+      <button data-part-id="pared_anterior" class="part-pill px-2.5 py-1 rounded-xl text-[11px] font-semibold bg-rose-500/20 text-rose-200 border border-rose-500/40 hover:bg-rose-500/35 transition cursor-pointer">
+        Pared + Venas
+      </button>
+      <button data-part-id="cuerpo_interno" class="part-pill px-2.5 py-1 rounded-xl text-[11px] font-semibold bg-amber-500/20 text-amber-200 border border-amber-500/40 hover:bg-amber-500/35 transition cursor-pointer">
+        Cavidades
+      </button>
+      <button data-part-id="valvulas" class="part-pill px-2.5 py-1 rounded-xl text-[11px] font-semibold bg-sky-500/20 text-sky-200 border border-sky-500/40 hover:bg-sky-500/35 transition cursor-pointer">
+        Válvulas
+      </button>
+      <button data-part-id="grandes_vasos" class="part-pill px-2.5 py-1 rounded-xl text-[11px] font-semibold bg-purple-500/20 text-purple-200 border border-purple-500/40 hover:bg-purple-500/35 transition cursor-pointer">
+        Grandes Vasos
+      </button>
+    </div>
+  </aside>
+
+  <!-- Bottom Floating Control Bar -->
+  <nav class="fixed bottom-4 left-1/2 -translate-x-1/2 z-20 flex flex-wrap items-center justify-center gap-1.5 sm:gap-2 bg-slate-950/78 backdrop-blur-2xl border border-slate-700/65 rounded-2xl px-2.5 sm:px-3 py-2 shadow-2xl w-[calc(100%-1.5rem)] sm:w-auto max-w-4xl">
+    <button id="btn-explode" class="px-3 py-2 rounded-xl bg-sky-500/15 hover:bg-sky-500/30 text-sky-100 border border-sky-400/40 text-xs sm:text-sm font-semibold transition flex items-center gap-1.5 cursor-pointer">
+      <svg class="w-4 h-4 text-sky-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+      </svg>
+      <span>Vista Explotada</span>
+    </button>
+
+    <button id="btn-open-interior" class="px-3 py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/30 text-amber-100 border border-amber-400/40 text-xs sm:text-sm font-semibold transition flex items-center gap-1.5 cursor-pointer">
+      <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+      </svg>
+      <span id="open-interior-label">Abrir Interior</span>
+    </button>
+
+    <button id="btn-focus-veins" class="px-3 py-2 rounded-xl bg-red-500/20 hover:bg-red-500/35 text-red-100 border border-red-400/45 text-xs sm:text-sm font-semibold transition flex items-center gap-1.5 cursor-pointer">
+      <svg class="w-4 h-4 text-red-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607zM10.5 7.5v6m3-3h-6" />
+      </svg>
+      <span>Enfocar Venas</span>
+    </button>
+
+    <button id="btn-assemble" class="px-3 py-2 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/30 text-emerald-100 border border-emerald-400/40 text-xs sm:text-sm font-semibold transition flex items-center gap-1.5 cursor-pointer">
+      <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" />
+      </svg>
+      <span>Reensamblar</span>
+    </button>
+
+    <button id="btn-heartbeat" class="px-3 py-2 rounded-xl bg-rose-500/20 hover:bg-rose-500/35 text-rose-100 border border-rose-400/45 text-xs sm:text-sm font-semibold transition flex items-center gap-1.5 cursor-pointer">
+      <span id="pulse-dot" class="w-2 h-2 rounded-full bg-rose-400 animate-ping"></span>
+      <span id="heartbeat-label">Latido 72 BPM</span>
+    </button>
+  </nav>
+
+  <!-- Main Three.js + WebXR Interactive Application -->
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+    import { XRButton } from 'three/addons/webxr/XRButton.js';
+    import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+    // =========================================================================
+    // 0. NON-BLOCKING TOAST NOTIFICATION HELPER
+    // =========================================================================
+    const toastBox = document.getElementById('toast-box');
+    let toastTimer = null;
+    function showToast(msg, duration = 3600) {
+      toastBox.textContent = msg;
+      toastBox.classList.remove('hidden');
+      toastBox.classList.add('toast-visible');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => {
+        toastBox.classList.add('hidden');
+        toastBox.classList.remove('toast-visible');
+      }, duration);
+    }
+
+    // =========================================================================
+    // 1. ANATOMICAL KNOWLEDGE BASE (5 SEPARABLE REALISTIC STRUCTURES)
+    // =========================================================================
+    const ANATOMY_META = {
+      pericardio: {
+        name: 'Pericardio (Saco Fibroseroso)',
+        layer: 1,
+        dissectionOrder: 5, // Peeled away FIRST when moving slider 5 -> 4
+        layerBadge: 'Capa 1 · Membrana Externa',
+        flowType: 'Líquido Pericárdico',
+        flowColor: '#22d3ee',
+        explodeOffset: new THREE.Vector3(0.0, 0.04, 0.28),
+        functionText:
+          'Membrana fibroserosa semitransparente que envuelve y protege al corazón en el mediastino. Contiene líquido pericárdico lubricante que elimina la fricción durante los más de 100.000 latidos diarios y limita la sobredistensión cardíaca.'
+      },
+      pared_anterior: {
+        name: 'Pared Anterior y Red Coronaria (Arterias y Venas 3D)',
+        layer: 2,
+        dissectionOrder: 4,
+        layerBadge: 'Capa 2 · Miocardio y Vasos',
+        flowType: 'Mixta (Arterias / Venas)',
+        flowColor: '#fb7185',
+        explodeOffset: new THREE.Vector3(-0.20, 0.0, 0.20),
+        functionText:
+          'Miocardio ventricular anterior surcado por almohadillas nodulares de grasa epicárdica y la red vascular coronaria 3D: arteria descendente anterior izquierda (DAI), ramas diagonales, arteria coronaria derecha y venas cardíacas magna y anteriores que nutren y drenan el músculo cardíaco.'
+      },
+      cuerpo_interno: {
+        name: 'Cuerpo Interno y Cavidades (Ventrículos, Aurículas y Tabique)',
+        layer: 3,
+        dissectionOrder: 2,
+        layerBadge: 'Capa 3 · Cavidades y Tabique',
+        flowType: 'Mixta (Der. Desox. / Izq. Oxig.)',
+        flowColor: '#f59e0b',
+        explodeOffset: new THREE.Vector3(0.0, -0.02, -0.14),
+        functionText:
+          'Aloja los ventrículos derecho e izquierdo huecos, las aurículas con sus orejuelas y el grueso tabique interventricular. Su cara interna exhibe crestas musculares (trabéculas carnosas) y músculos papilares cónicos que tensionan las válvulas.'
+      },
+      valvulas: {
+        name: 'Válvulas Cardíacas y Cuerdas Tendinosas',
+        layer: 4,
+        dissectionOrder: 1,
+        layerBadge: 'Capa 4 · Aparato Valvular',
+        flowType: 'Mixta (Flujo Unidireccional)',
+        flowColor: '#38bdf8',
+        explodeOffset: new THREE.Vector3(0.22, 0.02, 0.14),
+        functionText:
+          'Conjunto de las cuatro válvulas fibrosas nacaradas: Tricúspide y Mitral (sujetas por finas cuerdas tendinosas blanquecinas a los músculos papilares) más las válvulas semilunares Aórtica y Pulmonar. Garantizan el paso unidireccional de sangre sin reflujo.'
+      },
+      grandes_vasos: {
+        name: 'Grandes Vasos (Aorta, Arteria Pulmonar y Venas Cavas)',
+        layer: 5,
+        dissectionOrder: 3,
+        layerBadge: 'Capa 5 · Vasos Principales',
+        flowType: 'Oxigenada y Desoxigenada',
+        flowColor: '#c084fc',
+        explodeOffset: new THREE.Vector3(0.05, 0.22, -0.04),
+        functionText:
+          'Incluye el cayado aórtico con sus tres troncos supraaórticos (sangre oxigenada sistémica), el tronco pulmonar bifurcado hacia los pulmones (sangre desoxigenada), las venas cavas superior e inferior y las cuatro venas pulmonares, todos con lúmenes abiertos.'
+      }
+    };
+
+    // =========================================================================
+    // 2. HIGH-RESOLUTION (1024x1024) PROCEDURAL PBR TEXTURES
+    // =========================================================================
+    function createProceduralPBRTextures() {
+      const size = 1024;
+
+      // --- A. STRIATED WET MYOCARDIUM (Albedo, Bump, Roughness) ---
+      const myoAlbedoC = document.createElement('canvas');
+      const myoBumpC = document.createElement('canvas');
+      const myoRoughC = document.createElement('canvas');
+      [myoAlbedoC, myoBumpC, myoRoughC].forEach((c) => {
+        c.width = size;
+        c.height = size;
+      });
+
+      const aCtx = myoAlbedoC.getContext('2d');
+      const bCtx = myoBumpC.getContext('2d');
+      const rCtx = myoRoughC.getContext('2d');
+
+      // Deep realistic crimson-burgundy muscular base
+      const baseGrad = aCtx.createLinearGradient(0, 0, size, size);
+      baseGrad.addColorStop(0, '#4f1218');
+      baseGrad.addColorStop(0.5, '#641920');
+      baseGrad.addColorStop(1, '#430e14');
+      aCtx.fillStyle = baseGrad;
+      aCtx.fillRect(0, 0, size, size);
+
+      bCtx.fillStyle = '#7a7a7a';
+      bCtx.fillRect(0, 0, size, size);
+
+      // Wet glistening roughness base (~0.32)
+      rCtx.fillStyle = '#525252';
+      rCtx.fillRect(0, 0, size, size);
+
+      // Organic mottled vascular/muscular tonal patches
+      for (let i = 0; i < 320; i++) {
+        const x = Math.random() * size;
+        const y = Math.random() * size;
+        const rad = 22 + Math.random() * 78;
+        const g = aCtx.createRadialGradient(x, y, 2, x, y, rad);
+        const dark = Math.random() > 0.45;
+        g.addColorStop(0, dark ? 'rgba(38, 7, 12, 0.28)' : 'rgba(138, 36, 40, 0.20)');
+        g.addColorStop(1, 'rgba(0,0,0,0)');
+        aCtx.fillStyle = g;
+        aCtx.beginPath();
+        aCtx.arc(x, y, rad, 0, Math.PI * 2);
+        aCtx.fill();
+      }
+
+      // Helical striated myocardial muscle fiber bundles
+      for (let i = 0; i < 3400; i++) {
+        const x = Math.random() * size;
+        const y = Math.random() * size;
+        const len = 50 + Math.random() * 145;
+        const angle = -0.38 + (Math.random() - 0.5) * 0.20;
+        const ex = x + Math.cos(angle) * len;
+        const ey = y + Math.sin(angle) * len;
+        const lw = 0.7 + Math.random() * 2.2;
+
+        const isHighlight = Math.random() > 0.5;
+        aCtx.strokeStyle = isHighlight
+          ? 'rgba(154, 46, 44, 0.24)'
+          : 'rgba(34, 6, 10, 0.30)';
+        aCtx.lineWidth = lw;
+        aCtx.beginPath();
+        aCtx.moveTo(x, y);
+        aCtx.quadraticCurveTo(
+          (x + ex) * 0.5,
+          (y + ey) * 0.5 + (Math.random() - 0.5) * 12,
+          ex,
+          ey
+        );
+        aCtx.stroke();
+
+        const bVal = isHighlight ? 175 : 80;
+        bCtx.strokeStyle = `rgba(${bVal},${bVal},${bVal},0.35)`;
+        bCtx.lineWidth = lw;
+        bCtx.beginPath();
+        bCtx.moveTo(x, y);
+        bCtx.lineTo(ex, ey);
+        bCtx.stroke();
+      }
+
+      // Dense micro-capillary network embedded in epicardium (complements the raised 3D TubeGeometry vessels)
+      for (let v = 0; v < 110; v++) {
+        let vx = Math.random() * size;
+        let vy = Math.random() * size;
+        const isVenule = Math.random() > 0.55;
+        aCtx.strokeStyle = isVenule
+          ? 'rgba(46, 18, 56, 0.55)'
+          : 'rgba(168, 22, 26, 0.52)';
+        bCtx.strokeStyle = 'rgba(230, 230, 230, 0.42)';
+        rCtx.strokeStyle = 'rgba(34, 34, 34, 0.55)';
+        const w0 = 1.0 + Math.random() * 1.4;
+        aCtx.lineWidth = w0;
+        bCtx.lineWidth = w0;
+        rCtx.lineWidth = w0;
+
+        aCtx.beginPath();
+        bCtx.beginPath();
+        rCtx.beginPath();
+        aCtx.moveTo(vx, vy);
+        bCtx.moveTo(vx, vy);
+        rCtx.moveTo(vx, vy);
+
+        for (let s = 0; s < 12; s++) {
+          vx += (Math.random() - 0.42) * 34;
+          vy += 12 + Math.random() * 28;
+          aCtx.lineTo(vx, vy);
+          bCtx.lineTo(vx, vy);
+          rCtx.lineTo(vx, vy);
+        }
+        aCtx.stroke();
+        bCtx.stroke();
+        rCtx.stroke();
+      }
+
+      // --- B. INTERNAL ROUGH TRABECULAE CARNEAE (1024x1024) ---
+      const endoAlbedoC = document.createElement('canvas');
+      const endoBumpC = document.createElement('canvas');
+      endoAlbedoC.width = size;
+      endoAlbedoC.height = size;
+      endoBumpC.width = size;
+      endoBumpC.height = size;
+      const eaCtx = endoAlbedoC.getContext('2d');
+      const ebCtx = endoBumpC.getContext('2d');
+
+      eaCtx.fillStyle = '#3d0e14';
+      eaCtx.fillRect(0, 0, size, size);
+      ebCtx.fillStyle = '#303030';
+      ebCtx.fillRect(0, 0, size, size);
+
+      for (let t = 0; t < 780; t++) {
+        const x1 = Math.random() * size;
+        const y1 = Math.random() * size;
+        const x2 = x1 + (Math.random() - 0.5) * 140;
+        const y2 = y1 + 35 + Math.random() * 120;
+        const w = 4 + Math.random() * 12;
+
+        // Deep shadowed cavity recess
+        eaCtx.strokeStyle = 'rgba(18, 3, 6, 0.78)';
+        eaCtx.lineWidth = w + 6;
+        eaCtx.lineCap = 'round';
+        eaCtx.beginPath();
+        eaCtx.moveTo(x1, y1);
+        eaCtx.quadraticCurveTo(x1 + (Math.random() - 0.5) * 35, (y1 + y2) * 0.5, x2, y2);
+        eaCtx.stroke();
+
+        // Raised fleshy muscular ridge
+        eaCtx.strokeStyle = 'rgba(148, 48, 54, 0.70)';
+        eaCtx.lineWidth = w * 0.62;
+        eaCtx.beginPath();
+        eaCtx.moveTo(x1, y1);
+        eaCtx.quadraticCurveTo(x1 + 18, (y1 + y2) * 0.5, x2, y2);
+        eaCtx.stroke();
+
+        ebCtx.strokeStyle = 'rgba(242, 242, 242, 0.72)';
+        ebCtx.lineWidth = w;
+        ebCtx.lineCap = 'round';
+        ebCtx.beginPath();
+        ebCtx.moveTo(x1, y1);
+        ebCtx.quadraticCurveTo(x1 + 18, (y1 + y2) * 0.5, x2, y2);
+        ebCtx.stroke();
+      }
+
+      // --- C. FIBROUS PEARLESCENT VALVE MEMBRANE (1024x1024) ---
+      const valveAlbedoC = document.createElement('canvas');
+      const valveBumpC = document.createElement('canvas');
+      valveAlbedoC.width = size;
+      valveAlbedoC.height = size;
+      valveBumpC.width = size;
+      valveBumpC.height = size;
+      const vaCtx = valveAlbedoC.getContext('2d');
+      const vbCtx = valveBumpC.getContext('2d');
+
+      const vGrad = vaCtx.createLinearGradient(0, 0, size, size);
+      vGrad.addColorStop(0, '#efe5df');
+      vGrad.addColorStop(0.5, '#e3d0c8');
+      vGrad.addColorStop(1, '#f3ebe6');
+      vaCtx.fillStyle = vGrad;
+      vaCtx.fillRect(0, 0, size, size);
+      vbCtx.fillStyle = '#808080';
+      vbCtx.fillRect(0, 0, size, size);
+
+      for (let f = 0; f < 1600; f++) {
+        const y = Math.random() * size;
+        vaCtx.strokeStyle =
+          Math.random() > 0.5 ? 'rgba(255, 252, 248, 0.35)' : 'rgba(180, 140, 134, 0.25)';
+        vaCtx.lineWidth = 1 + Math.random() * 2;
+        vaCtx.beginPath();
+        vaCtx.moveTo(0, y);
+        vaCtx.bezierCurveTo(size * 0.33, y + (Math.random() - 0.5) * 28, size * 0.66, y + (Math.random() - 0.5) * 28, size, y);
+        vaCtx.stroke();
+
+        vbCtx.strokeStyle = Math.random() > 0.5 ? 'rgba(215,215,215,0.35)' : 'rgba(95,95,95,0.35)';
+        vbCtx.lineWidth = 1.5;
+        vbCtx.beginPath();
+        vbCtx.moveTo(0, y);
+        vbCtx.lineTo(size, y);
+        vbCtx.stroke();
+      }
+
+      // --- D. NODULAR EPICARDIAL ADIPOSE FAT TEXTURE (512x512) ---
+      const fatAlbedoC = document.createElement('canvas');
+      const fatBumpC = document.createElement('canvas');
+      fatAlbedoC.width = 512;
+      fatAlbedoC.height = 512;
+      fatBumpC.width = 512;
+      fatBumpC.height = 512;
+      const faCtx = fatAlbedoC.getContext('2d');
+      const fbCtx = fatBumpC.getContext('2d');
+
+      faCtx.fillStyle = '#c48d44';
+      faCtx.fillRect(0, 0, 512, 512);
+      fbCtx.fillStyle = '#646464';
+      fbCtx.fillRect(0, 0, 512, 512);
+
+      for (let l = 0; l < 820; l++) {
+        const lx = Math.random() * 512;
+        const ly = Math.random() * 512;
+        const lr = 5 + Math.random() * 14;
+        const fg = faCtx.createRadialGradient(lx - lr * 0.28, ly - lr * 0.28, 1, lx, ly, lr);
+        fg.addColorStop(0, '#ecc072');
+        fg.addColorStop(0.68, '#b87c36');
+        fg.addColorStop(1, '#753d21');
+        faCtx.fillStyle = fg;
+        faCtx.beginPath();
+        faCtx.arc(lx, ly, lr, 0, Math.PI * 2);
+        faCtx.fill();
+
+        const bg = fbCtx.createRadialGradient(lx, ly, 1, lx, ly, lr);
+        bg.addColorStop(0, '#ffffff');
+        bg.addColorStop(1, '#262626');
+        fbCtx.fillStyle = bg;
+        fbCtx.beginPath();
+        fbCtx.arc(lx, ly, lr, 0, Math.PI * 2);
+        fbCtx.fill();
+      }
+
+      const toTex = (canvas, isSRGB = false, rep = 2) => {
+        const tex = new THREE.CanvasTexture(canvas);
+        tex.wrapS = THREE.RepeatWrapping;
+        tex.wrapT = THREE.RepeatWrapping;
+        tex.repeat.set(rep, rep);
+        if (isSRGB) tex.colorSpace = THREE.SRGBColorSpace;
+        return tex;
+      };
+
+      return {
+        myoMap: toTex(myoAlbedoC, true, 1.8),
+        myoBump: toTex(myoBumpC, false, 1.8),
+        myoRough: toTex(myoRoughC, false, 1.8),
+        endoMap: toTex(endoAlbedoC, true, 2.0),
+        endoBump: toTex(endoBumpC, false, 2.0),
+        valveMap: toTex(valveAlbedoC, true, 1.5),
+        valveBump: toTex(valveBumpC, false, 1.5),
+        fatMap: toTex(fatAlbedoC, true, 2.2),
+        fatBump: toTex(fatBumpC, false, 2.2)
+      };
+    }
+
+    // =========================================================================
+    // 3. THREE.JS SCENE, RENDERER & SURGICAL STUDIO LIGHTING (RoomEnvironment)
+    // =========================================================================
+    const container = document.getElementById('canvas-container');
+    const scene = new THREE.Scene();
+
+    const camera = new THREE.PerspectiveCamera(
+      40,
+      window.innerWidth / window.innerHeight,
+      0.012,
+      45
+    );
+    const DEFAULT_CAM_POS = new THREE.Vector3(0.03, 1.36, 0.54);
+    const DEFAULT_CAM_TARGET = new THREE.Vector3(0.0, 1.34, 0.0);
+    camera.position.copy(DEFAULT_CAM_POS);
+
+    const renderer = new THREE.WebGLRenderer({
+      antialias: true,
+      alpha: true,
+      powerPreference: 'high-performance'
+    });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.15;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.xr.enabled = true;
+    container.appendChild(renderer.domElement);
+
+    // PMREMGenerator + RoomEnvironment for rich wet specular studio reflections
+    const pmremGenerator = new THREE.PMREMGenerator(renderer);
+    const roomEnv = new RoomEnvironment();
+    scene.environment = pmremGenerator.fromScene(roomEnv, 0.04).texture;
+    roomEnv.dispose();
+    pmremGenerator.dispose();
+
+    // Surgical/Clinical Studio Lighting Rig
+    const hemiLight = new THREE.HemisphereLight(0xdbeafe, 0x241016, 0.45);
+    scene.add(hemiLight);
+
+    // Warm surgical key light (creates specular highlights on raised 3D veins)
+    const keyLight = new THREE.DirectionalLight(0xfff1e0, 2.25);
+    keyLight.position.set(1.1, 2.4, 1.75);
+    keyLight.castShadow = true;
+    keyLight.shadow.mapSize.set(1024, 1024);
+    keyLight.shadow.bias = -0.0005;
+    scene.add(keyLight);
+
+    // Cool clinical fill light (enhances dark bluish-purple venous contrast)
+    const coolRimLight = new THREE.DirectionalLight(0x7dd3fc, 1.25);
+    coolRimLight.position.set(-1.6, 1.6, -1.4);
+    scene.add(coolRimLight);
+
+    // Secondary front-left surgical fill
+    const fillLight = new THREE.DirectionalLight(0xbfdbfe, 0.75);
+    fillLight.position.set(-1.5, 1.2, 1.3);
+    scene.add(fillLight);
+
+    // Subtle stainless-steel anatomical pedestal
+    const standGroup = new THREE.Group();
+    standGroup.position.set(0, 1.14, 0);
+    const steelMat = new THREE.MeshStandardMaterial({
+      color: 0x94a3b8,
+      metalness: 0.92,
+      roughness: 0.2
+    });
+    const baseDisc = new THREE.Mesh(new THREE.CylinderGeometry(0.115, 0.135, 0.012, 48), steelMat);
+    baseDisc.position.y = -0.04;
+    standGroup.add(baseDisc);
+
+    const glowRing = new THREE.Mesh(
+      new THREE.RingGeometry(0.112, 0.118, 64),
+      new THREE.MeshBasicMaterial({
+        color: 0x38bdf8,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.55
+      })
+    );
+    glowRing.rotation.x = -Math.PI / 2;
+    glowRing.position.y = -0.033;
+    standGroup.add(glowRing);
+    scene.add(standGroup);
+
+    // OrbitControls for Desktop/Mobile
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.copy(DEFAULT_CAM_TARGET);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.06;
+    controls.minDistance = 0.17;
+    controls.maxDistance = 1.65;
+    controls.update();
+
+    // Smooth camera focus transition state (for "Enfocar Venas" & reset)
+    let camAnim = null;
+    controls.addEventListener('start', () => {
+      // Immediately hand control back to user if they interact
+      camAnim = null;
+    });
+
+    function animateCameraTo(pos, target) {
+      camAnim = {
+        pos: pos.clone(),
+        target: target.clone()
+      };
+    }
+
+    // =========================================================================
+    // 4. ORGANIC SCULPTED HEART & REAL 3D RAISED VASCULAR NETWORK BUILDER
+    // =========================================================================
+    const textures = createProceduralPBRTextures();
+    const heartRoot = new THREE.Group();
+    heartRoot.position.set(0, 1.34, 0);
+    scene.add(heartRoot);
+
+    let activeParts = [];
+    let interactiveMeshes = [];
+
+    // Wet Physical Materials
+    const matOuterMyocardium = new THREE.MeshPhysicalMaterial({
+      color: 0xd8a0a0,
+      map: textures.myoMap,
+      bumpMap: textures.myoBump,
+      bumpScale: 0.0072,
+      roughnessMap: textures.myoRough,
+      roughness: 0.36,
+      metalness: 0.02,
+      clearcoat: 0.85,
+      clearcoatRoughness: 0.16,
+      side: THREE.DoubleSide
+    });
+
+    const matInnerEndocardium = new THREE.MeshPhysicalMaterial({
+      color: 0xc26e74,
+      map: textures.endoMap,
+      bumpMap: textures.endoBump,
+      bumpScale: 0.012,
+      roughness: 0.38,
+      metalness: 0.02,
+      clearcoat: 0.82,
+      clearcoatRoughness: 0.16,
+      side: THREE.DoubleSide
+    });
+
+    const matCutWallEdge = new THREE.MeshPhysicalMaterial({
+      color: 0xb6545c,
+      map: textures.myoMap,
+      bumpMap: textures.myoBump,
+      bumpScale: 0.007,
+      roughness: 0.44,
+      clearcoat: 0.72,
+      side: THREE.DoubleSide
+    });
+
+    // HIGH-GLOSS WET 3D CORONARY ARTERIES (Deep Arterial Red)
+    const matCoronaryArtery = new THREE.MeshPhysicalMaterial({
+      color: 0xb9151e,
+      bumpMap: textures.myoBump,
+      bumpScale: 0.0018,
+      roughness: 0.22,
+      metalness: 0.03,
+      clearcoat: 0.95,
+      clearcoatRoughness: 0.10
+    });
+
+    // HIGH-GLOSS WET 3D CARDIAC VEINS (Dark Bluish-Purple Venous)
+    const matCardiacVein = new THREE.MeshPhysicalMaterial({
+      color: 0x332458,
+      bumpMap: textures.myoBump,
+      bumpScale: 0.0018,
+      roughness: 0.24,
+      metalness: 0.04,
+      clearcoat: 0.92,
+      clearcoatRoughness: 0.12
+    });
+
+    // NODULAR EPICARDIAL ADIPOSE FAT (Yellow-Ochre)
+    const matEpicardialFat = new THREE.MeshPhysicalMaterial({
+      color: 0xf4cf86,
+      map: textures.fatMap,
+      bumpMap: textures.fatBump,
+      bumpScale: 0.009,
+      roughness: 0.44,
+      metalness: 0.01,
+      clearcoat: 0.72,
+      clearcoatRoughness: 0.22
+    });
+
+    // SEMI-TRANSPARENT PERICARDIAL SAC
+    const matPericardium = new THREE.MeshPhysicalMaterial({
+      color: 0xdbeafe,
+      roughness: 0.16,
+      metalness: 0.0,
+      transmission: 0.15,
+      transparent: true,
+      opacity: 0.22,
+      clearcoat: 1.0,
+      clearcoatRoughness: 0.08,
+      depthWrite: false,
+      side: THREE.DoubleSide
+    });
+
+    // GREAT VESSELS
+    const matAorta = new THREE.MeshPhysicalMaterial({
+      color: 0xd4746c,
+      map: textures.myoMap,
+      bumpMap: textures.myoBump,
+      bumpScale: 0.0042,
+      roughness: 0.34,
+      clearcoat: 0.84,
+      clearcoatRoughness: 0.16,
+      side: THREE.DoubleSide
+    });
+
+    const matPulmonary = new THREE.MeshPhysicalMaterial({
+      color: 0x99798d,
+      map: textures.myoMap,
+      bumpMap: textures.myoBump,
+      bumpScale: 0.0042,
+      roughness: 0.36,
+      clearcoat: 0.80,
+      clearcoatRoughness: 0.18,
+      side: THREE.DoubleSide
+    });
+
+    const matVenaCava = new THREE.MeshPhysicalMaterial({
+      color: 0x676086,
+      map: textures.myoMap,
+      bumpMap: textures.myoBump,
+      bumpScale: 0.0042,
+      roughness: 0.38,
+      clearcoat: 0.78,
+      clearcoatRoughness: 0.18,
+      side: THREE.DoubleSide
+    });
+
+    const matLumenDark = new THREE.MeshPhysicalMaterial({
+      color: 0x22070a,
+      roughness: 0.30,
+      clearcoat: 0.85,
+      side: THREE.DoubleSide
+    });
+
+    // FIBROUS PEARLESCENT HEART VALVES & CHORDAE TENDINEAE
+    const matValveFibrous = new THREE.MeshPhysicalMaterial({
+      color: 0xf0e4de,
+      map: textures.valveMap,
+      bumpMap: textures.valveBump,
+      bumpScale: 0.003,
+      roughness: 0.30,
+      metalness: 0.02,
+      clearcoat: 0.88,
+      clearcoatRoughness: 0.14,
+      side: THREE.DoubleSide
+    });
+
+    const matChordae = new THREE.MeshPhysicalMaterial({
+      color: 0xf7f1ed,
+      roughness: 0.28,
+      clearcoat: 0.82
+    });
+
+    // Deterministic organic hash for natural surface/vessel irregularities
+    function organicNoise(u, theta) {
+      return (
+        Math.sin(theta * 5.0 + u * 9.0) * 0.0019 +
+        Math.cos(theta * 8.0 - u * 7.0) * 0.0013 +
+        Math.sin(theta * 13.0 + u * 15.0) * 0.0007
+      );
+    }
+
+    // Parametric Asymmetric Anatomical Heart Surface
+    // u in [0, 1] (AV base -> apex), theta in [0, 2*PI] (0 = anterior)
+    function heartSurfacePoint(u, theta, scaleRadial = 1.0) {
+      const y = 0.056 - u * 0.165;
+      const profile = Math.sin(Math.pow(u, 0.60) * Math.PI) * 0.94 + (1 - u) * 0.17;
+
+      // Left ventricle (+X, theta > 0) is slightly fuller and thicker than right ventricle (-X)
+      const lvFullness = 1.0 + 0.085 * Math.max(0, Math.sin(theta));
+      const rx = 0.090 * profile * lvFullness * scaleRadial;
+      const rz = 0.072 * profile * scaleRadial;
+
+      // Anatomical tilt: apex points downward, anteriorly (+Z), and to the left (+X)
+      const apexShiftX = Math.pow(u, 1.52) * 0.042;
+      const apexShiftZ = Math.pow(u, 1.32) * 0.018;
+
+      // Anterior & Posterior Interventricular Sulcus grooves (where coronary vessels & fat sit)
+      const antSulcus = Math.exp(-Math.pow(Math.sin(theta - 0.14), 2) * 18) * 0.0075 * (1 - u * 0.42);
+      const postSulcus = Math.exp(-Math.pow(Math.sin(theta - (Math.PI + 0.16)), 2) * 18) * 0.0065 * (1 - u * 0.45);
+      const sulcus = (antSulcus + postSulcus) * scaleRadial;
+
+      const undul = organicNoise(u, theta) * scaleRadial;
+
+      const x = Math.sin(theta) * (rx - sulcus + undul) + apexShiftX;
+      const z = Math.cos(theta) * (rz - sulcus + undul) + apexShiftZ;
+      return new THREE.Vector3(x, y, z);
+    }
+
+    // Convert surface [u, theta] waypoints into exact 3D points hugging the myocardium
+    function surfacePath(uvPoints, radialOffset = 0.018) {
+      return uvPoints.map(([u, theta, extraOffset]) => {
+        const off = extraOffset !== undefined ? extraOffset : radialOffset;
+        return heartSurfacePoint(u, theta, 1.0 + off);
+      });
+    }
+
+    // Build a thick sculpted myocardial shell between thetaStart and thetaEnd
+    function createThickHeartShell(thetaStart, thetaEnd, innerScale = 0.74, uSteps = 44, tSteps = 44) {
+      const positions = [];
+      const uvs = [];
+      const indices = [];
+
+      const gridCols = tSteps + 1;
+      const gridRows = uSteps + 1;
+      const outerCount = gridCols * gridRows;
+
+      for (let i = 0; i <= uSteps; i++) {
+        const u = i / uSteps;
+        for (let j = 0; j <= tSteps; j++) {
+          const v = j / tSteps;
+          const theta = THREE.MathUtils.lerp(thetaStart, thetaEnd, v);
+          const p = heartSurfacePoint(u, theta, 1.0);
+          positions.push(p.x, p.y, p.z);
+          uvs.push(v, u);
+        }
+      }
+
+      for (let i = 0; i <= uSteps; i++) {
+        const u = i / uSteps;
+        for (let j = 0; j <= tSteps; j++) {
+          const v = j / tSteps;
+          const theta = THREE.MathUtils.lerp(thetaStart, thetaEnd, v);
+          const wallScale = theta > 0 ? innerScale : Math.min(0.84, innerScale + 0.065);
+          const p = heartSurfacePoint(u * 0.94 + 0.02, theta, wallScale);
+          positions.push(p.x, p.y, p.z);
+          uvs.push(v, u);
+        }
+      }
+
+      for (let i = 0; i < uSteps; i++) {
+        for (let j = 0; j < tSteps; j++) {
+          const a = i * gridCols + j;
+          const b = a + 1;
+          const c = (i + 1) * gridCols + j;
+          const d = c + 1;
+          indices.push(a, c, b, b, c, d);
+        }
+      }
+
+      for (let i = 0; i < uSteps; i++) {
+        for (let j = 0; j < tSteps; j++) {
+          const a = outerCount + i * gridCols + j;
+          const b = a + 1;
+          const c = outerCount + (i + 1) * gridCols + j;
+          const d = c + 1;
+          indices.push(a, b, c, b, d, c);
+        }
+      }
+
+      // Stitch cut borders
+      for (let i = 0; i < uSteps; i++) {
+        const o1 = i * gridCols;
+        const o2 = (i + 1) * gridCols;
+        const n1 = outerCount + o1;
+        const n2 = outerCount + o2;
+        indices.push(o1, n1, o2, o2, n1, n2);
+
+        const ro1 = i * gridCols + tSteps;
+        const ro2 = (i + 1) * gridCols + tSteps;
+        const rn1 = outerCount + ro1;
+        const rn2 = outerCount + ro2;
+        indices.push(ro1, ro2, rn1, ro2, rn2, rn1);
+      }
+
+      for (let j = 0; j < tSteps; j++) {
+        const o1 = j;
+        const o2 = j + 1;
+        const n1 = outerCount + j;
+        const n2 = outerCount + j + 1;
+        indices.push(o1, o2, n1, o2, n2, n1);
+      }
+
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+      geo.setIndex(indices);
+      geo.computeVertexNormals();
+      return geo;
+    }
+
+    // Tapered organic 3D blood vessel tube (for raised coronary arteries, veins & branches)
+    function createTaperedVessel(points, rStart, rEnd, mat, tubularSegs = 28, radSegs = 12) {
+      const curve = new THREE.CatmullRomCurve3(points);
+      const geo = new THREE.TubeGeometry(curve, tubularSegs, 1, radSegs, false);
+      const pos = geo.attributes.position;
+      const v = new THREE.Vector3();
+      const c = new THREE.Vector3();
+
+      for (let i = 0; i <= tubularSegs; i++) {
+        const u = i / tubularSegs;
+        curve.getPointAt(u, c);
+        // Smooth organic slight pulsation in diameter
+        const organicPulse = 1.0 + Math.sin(u * Math.PI * 5.0) * 0.06;
+        const r = THREE.MathUtils.lerp(rStart, rEnd, Math.pow(u, 0.85)) * organicPulse;
+        for (let j = 0; j <= radSegs; j++) {
+          const idx = i * (radSegs + 1) + j;
+          v.fromBufferAttribute(pos, idx);
+          v.sub(c).multiplyScalar(r).add(c);
+          pos.setXYZ(idx, v.x, v.y, v.z);
+        }
+      }
+      geo.computeVertexNormals();
+      return new THREE.Mesh(geo, mat);
+    }
+
+    // Hollow Great Vessel with dark open lumen and cut lip
+    function createHollowVessel(points, rStart, rEnd, outerMat, wallRatio = 0.72, segments = 36) {
+      const group = new THREE.Group();
+      const curve = new THREE.CatmullRomCurve3(points);
+      const radSegs = 22;
+
+      function buildTaperedTube(scaleR) {
+        const geo = new THREE.TubeGeometry(curve, segments, 1, radSegs, false);
+        const pos = geo.attributes.position;
+        const v = new THREE.Vector3();
+        const c = new THREE.Vector3();
+        for (let i = 0; i <= segments; i++) {
+          const u = i / segments;
+          curve.getPointAt(u, c);
+          const r = THREE.MathUtils.lerp(rStart, rEnd, u) * scaleR;
+          for (let j = 0; j <= radSegs; j++) {
+            const idx = i * (radSegs + 1) + j;
+            v.fromBufferAttribute(pos, idx);
+            v.sub(c).multiplyScalar(r).add(c);
+            pos.setXYZ(idx, v.x, v.y, v.z);
+          }
+        }
+        geo.computeVertexNormals();
+        return geo;
+      }
+
+      group.add(new THREE.Mesh(buildTaperedTube(1.0), outerMat));
+      group.add(new THREE.Mesh(buildTaperedTube(wallRatio), matLumenDark));
+
+      // Open hollow cut-end rim
+      const endRing = new THREE.Mesh(
+        new THREE.RingGeometry(rEnd * wallRatio, rEnd * 1.015, radSegs),
+        outerMat
+      );
+      const endPt = curve.getPointAt(1);
+      const endTan = curve.getTangentAt(1);
+      endRing.position.copy(endPt);
+      endRing.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), endTan);
+      group.add(endRing);
+
+      return group;
+    }
+
+    // Organic nodular yellow-ochre epicardial fat pad cluster along a surface path
+    function addNodularFatPad(parentGroup, uvPath, baseRadius, nodCount = 26) {
+      const pts = surfacePath(uvPath, 0.008);
+      const curve = new THREE.CatmullRomCurve3(pts);
+      const baseSphereGeo = new THREE.SphereGeometry(1, 10, 8);
+
+      // Continuous fatty cushion core
+      parentGroup.add(createTaperedVessel(pts, baseRadius * 0.92, baseRadius * 0.45, matEpicardialFat, 22, 10));
+
+      // Organic nodular adipose lobules hugging the sulcus & vessel base
+      for (let i = 0; i < nodCount; i++) {
+        const t = i / (nodCount - 1);
+        const pt = curve.getPointAt(t);
+        const taper = THREE.MathUtils.lerp(1.0, 0.42, t);
+        const spread = baseRadius * 0.85 * taper;
+
+        // Deterministic organic scatter
+        const jx = Math.sin(i * 12.9898) * spread;
+        const jy = Math.cos(i * 78.233) * spread * 0.5;
+        const jz = Math.sin(i * 39.425) * spread * 0.45;
+
+        const lobule = new THREE.Mesh(baseSphereGeo, matEpicardialFat);
+        const r = baseRadius * (0.48 + (Math.sin(i * 5.7) * 0.5 + 0.5) * 0.42) * taper;
+        lobule.scale.set(r * 1.15, r * 0.85, r * 0.72);
+        lobule.position.set(pt.x + jx, pt.y + jy, pt.z + jz);
+        parentGroup.add(lobule);
+      }
+    }
+
+    // Helper: Build a realistic branching 3D vessel tree (main trunk + primary + secondary branches)
+    function addVesselTree(parentGroup, treeDef, mat) {
+      treeDef.forEach(({ path, rStart, rEnd, offset = 0.022, segs = 26 }) => {
+        const pts = surfacePath(path, offset);
+        parentGroup.add(createTaperedVessel(pts, rStart, rEnd, mat, segs, 11));
+      });
+    }
+
+    function registerAnatomicalPart(id, group, customMeta = null) {
+      const meta = customMeta || ANATOMY_META[id];
+      const partObj = {
+        id,
+        meta,
+        group,
+        homePosition: group.position.clone(),
+        homeQuaternion: group.quaternion.clone(),
+        targetPosition: group.position.clone(),
+        targetQuaternion: group.quaternion.clone(),
+        isGrabbed: false,
+        isManuallyMoved: false,
+        meshes: []
+      };
+
+      group.traverse((child) => {
+        if (child.isMesh) {
+          if (child.material) {
+            child.material = child.material.clone();
+          }
+          child.userData.partObj = partObj;
+          child.castShadow = !child.material.transparent;
+          child.receiveShadow = true;
+          partObj.meshes.push(child);
+          interactiveMeshes.push(child);
+        }
+      });
+
+      heartRoot.add(group);
+      activeParts.push(partObj);
+      return partObj;
+    }
+
+    function buildRealisticHeart() {
+      while (heartRoot.children.length > 0) {
+        heartRoot.remove(heartRoot.children[0]);
+      }
+      activeParts = [];
+      interactiveMeshes = [];
+
+      // =======================================================================
+      // 1. PERICARDIO (Outer Semi-Transparent Fibroserous Sac)
+      // =======================================================================
+      {
+        const g = new THREE.Group();
+        const uSteps = 32;
+        const tSteps = 36;
+        const positions = [];
+        const uvs = [];
+        const indices = [];
+
+        for (let i = 0; i <= uSteps; i++) {
+          const u = i / uSteps;
+          for (let j = 0; j <= tSteps; j++) {
+            const v = j / tSteps;
+            const theta = v * Math.PI * 2;
+            const p = heartSurfacePoint(u, theta, 1.13);
+            // Slightly dome upward over atria
+            p.y += (1 - u) * 0.042;
+            positions.push(p.x, p.y, p.z);
+            uvs.push(v, u);
+          }
+        }
+        for (let i = 0; i < uSteps; i++) {
+          for (let j = 0; j < tSteps; j++) {
+            const a = i * (tSteps + 1) + j;
+            const b = a + 1;
+            const c = (i + 1) * (tSteps + 1) + j;
+            const d = c + 1;
+            indices.push(a, c, b, b, c, d);
+          }
+        }
+        const periGeo = new THREE.BufferGeometry();
+        periGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        periGeo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+        periGeo.setIndex(indices);
+        periGeo.computeVertexNormals();
+
+        const periMesh = new THREE.Mesh(periGeo, matPericardium);
+        g.add(periMesh);
+
+        // Start with pericardium subtly visible (user can drag it off or toggle in slider)
+        registerAnatomicalPart('pericardio', g);
+      }
+
+      // =======================================================================
+      // 2. PARED ANTERIOR Y RED CORONARIA (Sculpted Myocardium + Fat + 3D Veins & Arteries)
+      // =======================================================================
+      {
+        const g = new THREE.Group();
+
+        // Sculpted anterior myocardial wall (-1.30 to +1.48 rad)
+        const frontShellGeo = createThickHeartShell(-1.30, 1.48, 0.77, 46, 46);
+        g.add(new THREE.Mesh(frontShellGeo, matOuterMyocardium));
+
+        // --- NODULAR EPICARDIAL ADIPOSE FAT PADS ---
+        // Along anterior interventricular sulcus
+        addNodularFatPad(
+          g,
+          [
+            [0.03, 0.14],
+            [0.20, 0.15],
+            [0.42, 0.17],
+            [0.66, 0.14],
+            [0.86, 0.09]
+          ],
+          0.0115,
+          30
+        );
+        // Along anterior atrioventricular (coronary) groove
+        addNodularFatPad(
+          g,
+          [
+            [0.04, -1.18],
+            [0.03, -0.65],
+            [0.03, -0.10],
+            [0.03, 0.45],
+            [0.04, 1.05],
+            [0.05, 1.40]
+          ],
+          0.0105,
+          34
+        );
+        // Fat cluster around right ventricular conus / base of RCA
+        addNodularFatPad(
+          g,
+          [
+            [0.08, -0.82],
+            [0.20, -0.96],
+            [0.34, -1.08]
+          ],
+          0.0082,
+          14
+        );
+
+        // --- REAL 3D RAISED CORONARY ARTERIES (Deep Wet Red, Branching & Tapering) ---
+        addVesselTree(
+          g,
+          [
+            // 1. Left Anterior Descending (LAD / Descendente Anterior Izquierda) - Main sinuous trunk
+            {
+              path: [
+                [0.01, 0.15, 0.028],
+                [0.14, 0.12, 0.030],
+                [0.28, 0.19, 0.032],
+                [0.44, 0.15, 0.030],
+                [0.60, 0.21, 0.028],
+                [0.76, 0.14, 0.026],
+                [0.91, 0.06, 0.022],
+                [0.97, 0.02, 0.018]
+              ],
+              rStart: 0.0040,
+              rEnd: 0.0010,
+              segs: 38
+            },
+            // Diagonal 1 (D1) curving over upper-mid Left Ventricle
+            {
+              path: [
+                [0.16, 0.14, 0.028],
+                [0.26, 0.42, 0.025],
+                [0.39, 0.72, 0.022],
+                [0.54, 0.98, 0.019],
+                [0.68, 1.18, 0.016]
+              ],
+              rStart: 0.0028,
+              rEnd: 0.0007,
+              segs: 28
+            },
+            // D1 Sub-branch A
+            {
+              path: [
+                [0.32, 0.56, 0.022],
+                [0.46, 0.52, 0.019],
+                [0.62, 0.62, 0.016]
+              ],
+              rStart: 0.0016,
+              rEnd: 0.0005,
+              segs: 18
+            },
+            // D1 Sub-branch B
+            {
+              path: [
+                [0.44, 0.80, 0.020],
+                [0.54, 1.06, 0.017],
+                [0.65, 1.28, 0.014]
+              ],
+              rStart: 0.0015,
+              rEnd: 0.0005,
+              segs: 16
+            },
+            // Diagonal 2 (D2) mid-lower Left Ventricle
+            {
+              path: [
+                [0.38, 0.17, 0.028],
+                [0.50, 0.42, 0.024],
+                [0.64, 0.70, 0.020],
+                [0.79, 0.92, 0.016]
+              ],
+              rStart: 0.0024,
+              rEnd: 0.0006,
+              segs: 24
+            },
+            // D2 Sub-branch
+            {
+              path: [
+                [0.55, 0.52, 0.021],
+                [0.68, 0.46, 0.017],
+                [0.82, 0.56, 0.014]
+              ],
+              rStart: 0.0013,
+              rEnd: 0.0005,
+              segs: 14
+            },
+            // Diagonal 3 (D3) near Apex
+            {
+              path: [
+                [0.62, 0.19, 0.025],
+                [0.74, 0.40, 0.020],
+                [0.86, 0.62, 0.016]
+              ],
+              rStart: 0.0018,
+              rEnd: 0.0005,
+              segs: 18
+            },
+            // Right ventricular anterior twigs off LAD
+            {
+              path: [
+                [0.24, 0.15, 0.027],
+                [0.34, -0.08, 0.022],
+                [0.48, -0.26, 0.018],
+                [0.62, -0.34, 0.014]
+              ],
+              rStart: 0.0019,
+              rEnd: 0.0005,
+              segs: 20
+            },
+            {
+              path: [
+                [0.52, 0.17, 0.025],
+                [0.64, -0.06, 0.020],
+                [0.76, -0.22, 0.015]
+              ],
+              rStart: 0.0016,
+              rEnd: 0.0005,
+              segs: 16
+            },
+            // 2. Left Circumflex (LCx) & Obtuse Marginal (OM1) on left lateral border
+            {
+              path: [
+                [0.03, 0.25, 0.028],
+                [0.05, 0.65, 0.028],
+                [0.07, 1.05, 0.026],
+                [0.10, 1.42, 0.024]
+              ],
+              rStart: 0.0034,
+              rEnd: 0.0022,
+              segs: 24
+            },
+            {
+              path: [
+                [0.08, 1.12, 0.024],
+                [0.24, 1.22, 0.022],
+                [0.44, 1.32, 0.019],
+                [0.66, 1.36, 0.015]
+              ],
+              rStart: 0.0023,
+              rEnd: 0.0006,
+              segs: 22
+            },
+            // 3. Right Coronary Artery (RCA) & Acute Marginal Branches on Right Ventricle
+            {
+              path: [
+                [0.03, -0.32, 0.028],
+                [0.05, -0.68, 0.028],
+                [0.08, -1.04, 0.026],
+                [0.14, -1.26, 0.024]
+              ],
+              rStart: 0.0035,
+              rEnd: 0.0022,
+              segs: 24
+            },
+            // Acute Marginal 1 (AM1) sweeping across RV
+            {
+              path: [
+                [0.06, -0.78, 0.026],
+                [0.24, -0.72, 0.024],
+                [0.44, -0.58, 0.021],
+                [0.64, -0.38, 0.018],
+                [0.78, -0.16, 0.014]
+              ],
+              rStart: 0.0026,
+              rEnd: 0.0006,
+              segs: 28
+            },
+            // AM1 sub-branch
+            {
+              path: [
+                [0.34, -0.66, 0.022],
+                [0.48, -0.84, 0.018],
+                [0.64, -0.92, 0.014]
+              ],
+              rStart: 0.0015,
+              rEnd: 0.0005,
+              segs: 16
+            },
+            // Acute Marginal 2 (AM2) lower RV border
+            {
+              path: [
+                [0.12, -1.16, 0.024],
+                [0.32, -1.12, 0.021],
+                [0.54, -0.98, 0.018],
+                [0.72, -0.74, 0.014]
+              ],
+              rStart: 0.0022,
+              rEnd: 0.0006,
+              segs: 22
+            }
+          ],
+          matCoronaryArtery
+        );
+
+        // --- REAL 3D RAISED CARDIAC VEINS (Dark Bluish-Purple Venous, Parallel & Tributaries) ---
+        addVesselTree(
+          g,
+          [
+            // 1. Great Cardiac Vein (Vena Cardíaca Magna) running alongside LAD & curving left
+            {
+              path: [
+                [0.90, 0.14, 0.020],
+                [0.74, 0.24, 0.025],
+                [0.56, 0.28, 0.028],
+                [0.36, 0.25, 0.030],
+                [0.18, 0.23, 0.031],
+                [0.06, 0.34, 0.031],
+                [0.07, 0.74, 0.030],
+                [0.09, 1.18, 0.028],
+                [0.12, 1.44, 0.025]
+              ],
+              rStart: 0.0010,
+              rEnd: 0.0038,
+              segs: 40
+            },
+            // Left Ventricular Venous Tributary 1 (parallel to D1)
+            {
+              path: [
+                [0.66, 1.08, 0.016],
+                [0.50, 0.84, 0.020],
+                [0.34, 0.58, 0.023],
+                [0.21, 0.26, 0.028]
+              ],
+              rStart: 0.0007,
+              rEnd: 0.0025,
+              segs: 24
+            },
+            // Venous sub-tributary 1A
+            {
+              path: [
+                [0.60, 0.74, 0.015],
+                [0.46, 0.68, 0.019],
+                [0.36, 0.60, 0.022]
+              ],
+              rStart: 0.0005,
+              rEnd: 0.0014,
+              segs: 14
+            },
+            // Left Ventricular Venous Tributary 2 (parallel to D2)
+            {
+              path: [
+                [0.80, 0.80, 0.015],
+                [0.64, 0.56, 0.019],
+                [0.48, 0.36, 0.024],
+                [0.42, 0.26, 0.027]
+              ],
+              rStart: 0.0006,
+              rEnd: 0.0022,
+              segs: 22
+            },
+            // Left Marginal Vein
+            {
+              path: [
+                [0.72, 1.28, 0.015],
+                [0.48, 1.22, 0.019],
+                [0.26, 1.14, 0.022],
+                [0.09, 1.08, 0.026]
+              ],
+              rStart: 0.0007,
+              rEnd: 0.0024,
+              segs: 22
+            },
+            // Anterior Cardiac Veins (draining Right Ventricle across anterior face)
+            {
+              path: [
+                [0.70, -0.32, 0.015],
+                [0.50, -0.48, 0.019],
+                [0.28, -0.62, 0.023],
+                [0.07, -0.68, 0.026]
+              ],
+              rStart: 0.0007,
+              rEnd: 0.0024,
+              segs: 24
+            },
+            {
+              path: [
+                [0.56, -0.82, 0.015],
+                [0.36, -0.94, 0.019],
+                [0.16, -1.04, 0.023],
+                [0.08, -1.08, 0.025]
+              ],
+              rStart: 0.0006,
+              rEnd: 0.0021,
+              segs: 20
+            },
+            // Right ventricular venous sub-twig
+            {
+              path: [
+                [0.58, -0.18, 0.014],
+                [0.44, -0.34, 0.018],
+                [0.34, -0.54, 0.021]
+              ],
+              rStart: 0.0005,
+              rEnd: 0.0014,
+              segs: 14
+            }
+          ],
+          matCardiacVein
+        );
+
+        registerAnatomicalPart('pared_anterior', g);
+      }
+
+      // =======================================================================
+      // 3. CUERPO INTERNO Y CAVIDADES (Hollow Chambers, Septum, Trabeculae, Atria & Back Veins)
+      // =======================================================================
+      {
+        const g = new THREE.Group();
+
+        // Posterior/Internal hollow ventricular body (open anteriorly)
+        const backShellGeo = createThickHeartShell(1.48, Math.PI * 2 - 1.30, 0.72, 42, 44);
+        g.add(new THREE.Mesh(backShellGeo, matInnerEndocardium));
+
+        // Posterior epicardial fat & Middle Cardiac Vein / Posterior Descending Artery on back wall
+        addNodularFatPad(
+          g,
+          [
+            [0.06, Math.PI + 0.16],
+            [0.32, Math.PI + 0.18],
+            [0.62, Math.PI + 0.14],
+            [0.86, Math.PI + 0.06]
+          ],
+          0.0095,
+          20
+        );
+        addVesselTree(
+          g,
+          [
+            // Posterior Descending Artery (PDA)
+            {
+              path: [
+                [0.06, Math.PI + 0.12, 0.025],
+                [0.32, Math.PI + 0.15, 0.025],
+                [0.62, Math.PI + 0.10, 0.022],
+                [0.88, Math.PI + 0.04, 0.018]
+              ],
+              rStart: 0.0028,
+              rEnd: 0.0008,
+              segs: 26
+            },
+            // Posterior Left Ventricular Arterial branch
+            {
+              path: [
+                [0.22, Math.PI + 0.14, 0.023],
+                [0.44, Math.PI - 0.35, 0.020],
+                [0.68, Math.PI - 0.72, 0.016]
+              ],
+              rStart: 0.0019,
+              rEnd: 0.0006,
+              segs: 20
+            }
+          ],
+          matCoronaryArtery
+        );
+        addVesselTree(
+          g,
+          [
+            // Middle Cardiac Vein (Vena Cardíaca Media) + Coronary Sinus
+            {
+              path: [
+                [0.86, Math.PI + 0.12, 0.020],
+                [0.58, Math.PI + 0.22, 0.025],
+                [0.28, Math.PI + 0.24, 0.028],
+                [0.08, Math.PI + 0.20, 0.032],
+                [0.08, Math.PI - 0.35, 0.034],
+                [0.10, Math.PI - 0.95, 0.030]
+              ],
+              rStart: 0.0009,
+              rEnd: 0.0044,
+              segs: 32
+            },
+            // Posterior Left Ventricular Vein
+            {
+              path: [
+                [0.72, Math.PI - 0.65, 0.016],
+                [0.46, Math.PI - 0.52, 0.021],
+                [0.12, Math.PI - 0.42, 0.028]
+              ],
+              rStart: 0.0007,
+              rEnd: 0.0024,
+              segs: 20
+            }
+          ],
+          matCardiacVein
+        );
+
+        // Thick Muscular Interventricular Septum
+        const septumShape = new THREE.Shape();
+        septumShape.moveTo(0, 0.054);
+        septumShape.quadraticCurveTo(0.015, -0.015, 0.032, -0.098);
+        septumShape.quadraticCurveTo(0.009, -0.101, -0.009, -0.084);
+        septumShape.quadraticCurveTo(-0.014, -0.01, -0.012, 0.052);
+        septumShape.closePath();
+
+        const septumGeo = new THREE.ExtrudeGeometry(septumShape, {
+          depth: 0.090,
+          bevelEnabled: true,
+          bevelThickness: 0.006,
+          bevelSize: 0.005,
+          bevelSegments: 4
+        });
+        septumGeo.translate(0, 0, -0.058);
+        const septum = new THREE.Mesh(septumGeo, matCutWallEdge);
+        septum.rotation.y = 0.14;
+        g.add(septum);
+
+        // 3D Sculpted Trabeculae Carneae (fleshy interwoven ridges inside both ventricles)
+        const trabeculae = [
+          // Left ventricle
+          [[0.022, -0.008, -0.032], [0.048, -0.046, -0.028], [0.036, -0.086, -0.008]],
+          [[0.048, -0.004, -0.014], [0.062, -0.042, -0.010], [0.044, -0.088, 0.004]],
+          [[0.026, -0.032, -0.040], [0.054, -0.064, -0.024], [0.040, -0.094, -0.002]],
+          [[0.035, -0.018, -0.036], [0.024, -0.058, -0.026], [0.046, -0.082, -0.012]],
+          // Right ventricle
+          [[-0.018, -0.010, -0.026], [-0.042, -0.045, -0.020], [-0.016, -0.078, -0.004]],
+          [[-0.044, -0.005, -0.010], [-0.054, -0.038, -0.002], [-0.026, -0.070, 0.009]],
+          [[-0.024, -0.028, -0.032], [-0.046, -0.056, -0.014], [-0.018, -0.074, 0.004]]
+        ];
+        trabeculae.forEach((pts) => {
+          g.add(
+            createTaperedVessel(
+              pts.map((p) => new THREE.Vector3(...p)),
+              0.0046,
+              0.0026,
+              matInnerEndocardium,
+              16,
+              10
+            )
+          );
+        });
+
+        // 4 Conical Papillary Muscles
+        const papDefs = [
+          { base: [0.048, -0.078, -0.016], tip: [0.039, -0.020, -0.002], r: 0.0090 },
+          { base: [0.027, -0.084, -0.025], tip: [0.033, -0.024, -0.015], r: 0.0078 },
+          { base: [-0.038, -0.070, -0.014], tip: [-0.032, -0.016, 0.002], r: 0.0078 },
+          { base: [-0.016, -0.074, -0.022], tip: [-0.024, -0.018, -0.011], r: 0.0070 }
+        ];
+        papDefs.forEach((p) => {
+          g.add(
+            createTaperedVessel(
+              [new THREE.Vector3(...p.base), new THREE.Vector3(...p.tip)],
+              p.r,
+              p.r * 0.42,
+              matCutWallEdge,
+              10,
+              10
+            )
+          );
+        });
+
+        // Hollow Right Atrium & Crinkled Auricular Appendage (Orejuela Derecha)
+        const raGeo = new THREE.SphereGeometry(0.045, 28, 24, 0.55, Math.PI * 1.45, 0.15, Math.PI * 0.85);
+        const raMesh = new THREE.Mesh(raGeo, matInnerEndocardium);
+        raMesh.position.set(-0.048, 0.076, -0.008);
+        raMesh.rotation.y = Math.PI * 0.32;
+        g.add(raMesh);
+
+        const rAuricleGeo = new THREE.SphereGeometry(0.028, 22, 18);
+        rAuricleGeo.scale(1.3, 0.84, 0.62);
+        const rAuricle = new THREE.Mesh(rAuricleGeo, matOuterMyocardium);
+        rAuricle.position.set(-0.068, 0.088, 0.020);
+        rAuricle.rotation.set(0.22, 0.52, -0.38);
+        g.add(rAuricle);
+
+        // Hollow Left Atrium & Crinkled Auricular Appendage (Orejuela Izquierda)
+        const laGeo = new THREE.SphereGeometry(0.042, 28, 24, 0.45, Math.PI * 1.5, 0.15, Math.PI * 0.85);
+        const laMesh = new THREE.Mesh(laGeo, matInnerEndocardium);
+        laMesh.position.set(0.044, 0.080, -0.022);
+        laMesh.rotation.y = Math.PI * 0.55;
+        g.add(laMesh);
+
+        const lAuricleGeo = new THREE.SphereGeometry(0.025, 22, 18);
+        lAuricleGeo.scale(1.35, 0.78, 0.62);
+        const lAuricle = new THREE.Mesh(lAuricleGeo, matOuterMyocardium);
+        lAuricle.position.set(0.070, 0.090, 0.010);
+        lAuricle.rotation.set(0.16, -0.42, 0.35);
+        g.add(lAuricle);
+
+        registerAnatomicalPart('cuerpo_interno', g);
+      }
+
+      // =======================================================================
+      // 4. VÁLVULAS CARDÍACAS Y CUERDAS TENDINOSAS (Unified 4-Valve Fibrous Apparatus)
+      // =======================================================================
+      {
+        const g = new THREE.Group();
+
+        function buildAVValve({ pos, rot, radius, leafletCount, chordTargets }) {
+          const vg = new THREE.Group();
+          vg.position.set(...pos);
+          vg.rotation.set(...rot);
+
+          const annulus = new THREE.Mesh(
+            new THREE.TorusGeometry(radius, 0.0034, 14, 36),
+            matValveFibrous
+          );
+          annulus.rotation.x = Math.PI / 2;
+          vg.add(annulus);
+
+          for (let i = 0; i < leafletCount; i++) {
+            const a = (i / leafletCount) * Math.PI * 2;
+            const cuspGeo = new THREE.SphereGeometry(
+              radius * 0.78,
+              18,
+              14,
+              0,
+              Math.PI * 1.05,
+              0,
+              Math.PI * 0.56
+            );
+            cuspGeo.scale(1.0, 1.38, 0.55);
+            const cusp = new THREE.Mesh(cuspGeo, matValveFibrous);
+            cusp.position.set(Math.cos(a) * radius * 0.42, -radius * 0.35, Math.sin(a) * radius * 0.42);
+            cusp.rotation.y = -a + Math.PI / 2;
+            cusp.rotation.x = Math.PI * 0.88;
+            vg.add(cusp);
+
+            // Delicate branching whitish chordae tendineae
+            const targetLocal = chordTargets[i % chordTargets.length];
+            for (let s = -1; s <= 1; s++) {
+              const startPt = new THREE.Vector3(
+                Math.cos(a + s * 0.28) * radius * 0.54,
+                -radius * 0.74,
+                Math.sin(a + s * 0.28) * radius * 0.54
+              );
+              const midPt = startPt.clone().lerp(targetLocal, 0.5);
+              midPt.x += s * 0.0022;
+              vg.add(createTaperedVessel([startPt, midPt, targetLocal], 0.00095, 0.0007, matChordae, 8, 6));
+            }
+          }
+          return vg;
+        }
+
+        function buildSemilunarValve({ pos, rot, radius }) {
+          const vg = new THREE.Group();
+          vg.position.set(...pos);
+          vg.rotation.set(...rot);
+
+          const ring = new THREE.Mesh(
+            new THREE.TorusGeometry(radius, 0.0028, 12, 32),
+            matValveFibrous
+          );
+          ring.rotation.x = Math.PI / 2;
+          vg.add(ring);
+
+          for (let i = 0; i < 3; i++) {
+            const a = (i / 3) * Math.PI * 2;
+            const cupGeo = new THREE.SphereGeometry(
+              radius * 0.64,
+              16,
+              12,
+              0,
+              Math.PI * 2,
+              0,
+              Math.PI * 0.56
+            );
+            const cup = new THREE.Mesh(cupGeo, matValveFibrous);
+            cup.position.set(Math.cos(a) * radius * 0.36, -0.002, Math.sin(a) * radius * 0.36);
+            cup.rotation.x = Math.PI;
+            vg.add(cup);
+          }
+          return vg;
+        }
+
+        // Tricúspide
+        g.add(
+          buildAVValve({
+            pos: [-0.036, 0.045, -0.002],
+            rot: [0.15, 0.1, -0.18],
+            radius: 0.0215,
+            leafletCount: 3,
+            chordTargets: [
+              new THREE.Vector3(0.003, -0.062, 0.004),
+              new THREE.Vector3(0.012, -0.064, -0.008)
+            ]
+          })
+        );
+
+        // Mitral
+        g.add(
+          buildAVValve({
+            pos: [0.037, 0.047, -0.010],
+            rot: [0.15, -0.1, 0.16],
+            radius: 0.0195,
+            leafletCount: 2,
+            chordTargets: [
+              new THREE.Vector3(0.004, -0.068, 0.006),
+              new THREE.Vector3(-0.004, -0.070, -0.005)
+            ]
+          })
+        );
+
+        // Aórtica
+        g.add(
+          buildSemilunarValve({
+            pos: [0.008, 0.065, -0.002],
+            rot: [-0.15, 0, 0.12],
+            radius: 0.015
+          })
+        );
+
+        // Pulmonar
+        g.add(
+          buildSemilunarValve({
+            pos: [-0.012, 0.069, 0.023],
+            rot: [0.22, 0.18, -0.15],
+            radius: 0.015
+          })
+        );
+
+        registerAnatomicalPart('valvulas', g);
+      }
+
+      // =======================================================================
+      // 5. GRANDES VASOS (Aortic Arch + 3 Trunks, Bifurcated Pulmonary, Vena Cavae)
+      // =======================================================================
+      {
+        const g = new THREE.Group();
+
+        // Aortic Arch
+        g.add(
+          createHollowVessel(
+            [
+              new THREE.Vector3(0.008, 0.065, -0.002),
+              new THREE.Vector3(-0.004, 0.114, 0.004),
+              new THREE.Vector3(0.010, 0.156, -0.008),
+              new THREE.Vector3(0.036, 0.160, -0.028),
+              new THREE.Vector3(0.044, 0.116, -0.050),
+              new THREE.Vector3(0.040, 0.042, -0.056)
+            ],
+            0.0205,
+            0.016,
+            matAorta,
+            0.74,
+            44
+          )
+        );
+
+        // 3 Supra-aortic trunks (open hollow lumens)
+        [
+          [new THREE.Vector3(-0.002, 0.142, 0.000), new THREE.Vector3(-0.012, 0.195, 0.003), 0.0076],
+          [new THREE.Vector3(0.014, 0.158, -0.012), new THREE.Vector3(0.012, 0.203, -0.012), 0.0063],
+          [new THREE.Vector3(0.028, 0.158, -0.022), new THREE.Vector3(0.032, 0.199, -0.024), 0.0063]
+        ].forEach(([p0, p1, r]) => {
+          g.add(createHollowVessel([p0, p1], r, r * 0.9, matAorta, 0.68, 16));
+        });
+
+        // Pulmonary Trunk + Left & Right Pulmonary Arteries
+        g.add(
+          createHollowVessel(
+            [
+              new THREE.Vector3(-0.012, 0.069, 0.023),
+              new THREE.Vector3(-0.004, 0.104, 0.025),
+              new THREE.Vector3(0.010, 0.124, 0.010)
+            ],
+            0.0175,
+            0.0158,
+            matPulmonary,
+            0.74,
+            24
+          )
+        );
+        g.add(
+          createHollowVessel(
+            [
+              new THREE.Vector3(0.010, 0.124, 0.010),
+              new THREE.Vector3(0.050, 0.128, 0.004),
+              new THREE.Vector3(0.094, 0.124, -0.008)
+            ],
+            0.0128,
+            0.0108,
+            matPulmonary,
+            0.70,
+            20
+          )
+        );
+        g.add(
+          createHollowVessel(
+            [
+              new THREE.Vector3(0.010, 0.124, 0.010),
+              new THREE.Vector3(-0.035, 0.120, -0.006),
+              new THREE.Vector3(-0.084, 0.116, -0.016)
+            ],
+            0.0128,
+            0.0108,
+            matPulmonary,
+            0.70,
+            20
+          )
+        );
+
+        // Superior & Inferior Vena Cava
+        g.add(
+          createHollowVessel(
+            [
+              new THREE.Vector3(-0.053, 0.090, -0.008),
+              new THREE.Vector3(-0.053, 0.138, -0.010),
+              new THREE.Vector3(-0.049, 0.188, -0.012)
+            ],
+            0.0168,
+            0.0158,
+            matVenaCava,
+            0.74,
+            24
+          )
+        );
+        g.add(
+          createHollowVessel(
+            [
+              new THREE.Vector3(-0.055, 0.045, -0.022),
+              new THREE.Vector3(-0.059, -0.016, -0.030),
+              new THREE.Vector3(-0.061, -0.074, -0.034)
+            ],
+            0.0172,
+            0.0178,
+            matVenaCava,
+            0.74,
+            20
+          )
+        );
+
+        // 4 Pulmonary Veins entering Left Atrium
+        [
+          [[0.057, 0.090, -0.024], [0.097, 0.098, -0.022]],
+          [[0.057, 0.072, -0.028], [0.096, 0.074, -0.032]],
+          [[0.026, 0.090, -0.042], [0.004, 0.096, -0.068]],
+          [[0.026, 0.074, -0.044], [0.004, 0.076, -0.070]]
+        ].forEach(([p0, p1]) => {
+          g.add(
+            createHollowVessel(
+              [new THREE.Vector3(...p0), new THREE.Vector3(...p1)],
+              0.0086,
+              0.0078,
+              matAorta,
+              0.70,
+              12
+            )
+          );
+        });
+
+        registerAnatomicalPart('grandes_vasos', g);
+      }
+    }
+
+    buildRealisticHeart();
+
+    // =========================================================================
+    // 5. CUSTOM .GLB / .GLTF LOADER (AUTO-SEPARABLE & GRABBABLE)
+    // =========================================================================
+    const gltfLoader = new GLTFLoader();
+    const fileInput = document.getElementById('glb-file-input');
+    const btnUploadGLB = document.getElementById('btn-upload-glb');
+    const btnRestoreDefault = document.getElementById('btn-restore-default');
+
+    btnUploadGLB.addEventListener('click', () => fileInput.click());
+
+    btnRestoreDefault.addEventListener('click', () => {
+      buildRealisticHeart();
+      btnRestoreDefault.classList.add('hidden');
+      reassembleAll();
+      showToast('Corazón anatómico 3D restaurado.');
+    });
+
+    fileInput.addEventListener('change', (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      const url = URL.createObjectURL(file);
+      showToast(`Cargando modelo ${file.name}...`);
+
+      gltfLoader.load(
+        url,
+        (gltf) => {
+          URL.revokeObjectURL(url);
+          try {
+            const loadedScene = gltf.scene;
+            loadedScene.updateMatrixWorld(true);
+
+            const box = new THREE.Box3().setFromObject(loadedScene);
+            const size = new THREE.Vector3();
+            const center = new THREE.Vector3();
+            box.getSize(size);
+            box.getCenter(center);
+            const maxDim = Math.max(size.x, size.y, size.z) || 1;
+            const scaleFactor = 0.28 / maxDim;
+
+            const foundMeshes = [];
+            loadedScene.traverse((obj) => {
+              if (obj.isMesh) foundMeshes.push(obj);
+            });
+
+            if (foundMeshes.length === 0) {
+              showToast('El archivo .GLB no contiene mallas 3D visibles.');
+              return;
+            }
+
+            while (heartRoot.children.length > 0) {
+              heartRoot.remove(heartRoot.children[0]);
+            }
+            activeParts = [];
+            interactiveMeshes = [];
+
+            foundMeshes.forEach((mesh, idx) => {
+              const wrapper = new THREE.Group();
+              const geom = mesh.geometry.clone();
+              geom.applyMatrix4(mesh.matrixWorld);
+              geom.translate(-center.x, -center.y, -center.z);
+              geom.scale(scaleFactor, scaleFactor, scaleFactor);
+              geom.computeBoundingBox();
+
+              const partCenter = new THREE.Vector3();
+              geom.boundingBox.getCenter(partCenter);
+              geom.translate(-partCenter.x, -partCenter.y, -partCenter.z);
+
+              wrapper.position.copy(partCenter);
+              wrapper.add(new THREE.Mesh(geom, mesh.material));
+
+              const cleanName = (mesh.name || `Pieza Anatómica ${idx + 1}`).replace(/_/g, ' ');
+              const radialDir = partCenter.clone();
+              if (radialDir.lengthSq() < 0.0001) {
+                radialDir.set(Math.cos(idx), 0.15, Math.sin(idx));
+              }
+              radialDir.normalize().multiplyScalar(0.18);
+
+              const order = (idx % 5) + 1;
+              registerAnatomicalPart(`glb_part_${idx}`, wrapper, {
+                name: cleanName,
+                layer: order,
+                dissectionOrder: order,
+                layerBadge: `Capa ${order} · Modelo .GLB`,
+                flowType: 'Malla Importada',
+                flowColor: '#818cf8',
+                explodeOffset: radialDir,
+                functionText: `Estructura "${cleanName}" importada desde ${file.name}. Arrástrala con el ratón o pellízcala con tus manos en Meta Quest para inspeccionarla en 360°.`
+              });
+            });
+
+            btnRestoreDefault.classList.remove('hidden');
+            selectPart(activeParts[0]);
+            showToast(`Modelo cargado: ${foundMeshes.length} piezas listas para desmontar.`);
+          } catch (err) {
+            console.error(err);
+            showToast('Error al procesar las mallas del archivo .GLB.');
+          }
+        },
+        undefined,
+        (err) => {
+          URL.revokeObjectURL(url);
+          console.error(err);
+          showToast('No se pudo cargar el archivo .GLB/.GLTF.');
+        }
+      );
+      fileInput.value = '';
+    });
+
+    // =========================================================================
+    // 6. UI STATE, LAYER DISSECTION & ANATOMICAL INFO PANEL
+    // =========================================================================
+    let selectedPart = null;
+    let hoveredPart = null;
+    let isExploded = false;
+    let isInteriorOpen = false;
+    let heartbeatEnabled = true;
+    let dissectionLevel = 4; // Start at 4 (Pericardium off initially so raised 3D veins shine immediately!)
+
+    const elTitle = document.getElementById('part-title');
+    const elLayerBadge = document.getElementById('part-layer-badge');
+    const elFlowBadge = document.getElementById('part-flow-badge');
+    const elFunction = document.getElementById('part-function');
+    const elLayerSlider = document.getElementById('layer-slider');
+    const elLayerStepText = document.getElementById('layer-step-text');
+    const elOpenInteriorLabel = document.getElementById('open-interior-label');
+
+    function selectPart(partObj) {
+      if (!partObj) return;
+      selectedPart = partObj;
+      const m = partObj.meta;
+
+      elTitle.textContent = m.name;
+      elLayerBadge.textContent = m.layerBadge;
+      elFlowBadge.textContent = m.flowType;
+      elFlowBadge.style.borderColor = m.flowColor;
+      elFlowBadge.style.color = m.flowColor;
+      elFunction.textContent = m.functionText;
+
+      applyHighlight();
+      updateVRInfoPanel(m);
+    }
+
+    function applyHighlight() {
+      activeParts.forEach((part) => {
+        const isHot = part === selectedPart || part === hoveredPart || part.isGrabbed;
+        part.meshes.forEach((mesh) => {
+          if (mesh.material && 'emissive' in mesh.material) {
+            if (part.isGrabbed) {
+              mesh.material.emissive.setHex(0x0ea5e9);
+              mesh.material.emissiveIntensity = 0.36;
+            } else if (part === hoveredPart) {
+              mesh.material.emissive.setHex(0x38bdf8);
+              mesh.material.emissiveIntensity = 0.20;
+            } else if (isHot) {
+              mesh.material.emissive.setHex(0x38bdf8);
+              mesh.material.emissiveIntensity = 0.10;
+            } else {
+              mesh.material.emissive.setHex(0x000000);
+              mesh.material.emissiveIntensity = 0.0;
+            }
+          }
+        });
+      });
+    }
+
+    function setDissectionLevel(level) {
+      dissectionLevel = Number(level);
+      elLayerSlider.value = dissectionLevel;
+
+      activeParts.forEach((part) => {
+        part.group.visible = part.meta.dissectionOrder <= dissectionLevel;
+      });
+
+      const labels = {
+        5: 'Capas 1–5 · Con Pericardio',
+        4: 'Sin Pericardio · Venas 3D Visibles',
+        3: 'Sin Pared Ant. · Interior Visible',
+        2: 'Cavidades + Válvulas Internas',
+        1: 'Solo Válvulas y Cuerdas'
+      };
+      elLayerStepText.textContent = labels[dissectionLevel] || `Capa ${dissectionLevel}`;
+
+      const front = activeParts.find((p) => p.id === 'pared_anterior');
+      isInteriorOpen = front ? !front.group.visible : false;
+      elOpenInteriorLabel.textContent = isInteriorOpen ? 'Cerrar Pared' : 'Abrir Interior';
+
+      const focusPart =
+        dissectionLevel === 3
+          ? activeParts.find((p) => p.id === 'cuerpo_interno')
+          : activeParts.find((p) => p.meta.dissectionOrder === dissectionLevel);
+      if (focusPart && focusPart.group.visible) {
+        selectPart(focusPart);
+      }
+    }
+
+    function setExplodedState(explode) {
+      isExploded = explode;
+      if (explode) {
+        activeParts.forEach((p) => (p.group.visible = true));
+        dissectionLevel = 5;
+        elLayerSlider.value = 5;
+        elLayerStepText.textContent = 'Vista Explotada · 5 Capas';
+      }
+      activeParts.forEach((part) => {
+        part.isManuallyMoved = false;
+        part.targetQuaternion.copy(part.homeQuaternion);
+        if (explode) {
+          part.targetPosition.copy(part.homePosition).add(part.meta.explodeOffset);
+        } else {
+          part.targetPosition.copy(part.homePosition);
+        }
+      });
+    }
+
+    function reassembleAll() {
+      isExploded = false;
+      isInteriorOpen = false;
+      elOpenInteriorLabel.textContent = 'Abrir Interior';
+      setDissectionLevel(4); // Restore crisp exposed coronary view
+      activeParts.forEach((part) => {
+        part.isManuallyMoved = false;
+        part.targetPosition.copy(part.homePosition);
+        part.targetQuaternion.copy(part.homeQuaternion);
+      });
+      const front = activeParts.find((p) => p.id === 'pared_anterior') || activeParts[0];
+      if (front) selectPart(front);
+      animateCameraTo(DEFAULT_CAM_POS, DEFAULT_CAM_TARGET);
+    }
+
+    function toggleOpenInterior() {
+      const front = activeParts.find((p) => p.id === 'pared_anterior');
+      const peri = activeParts.find((p) => p.id === 'pericardio');
+      if (!front) {
+        setExplodedState(!isExploded);
+        return;
+      }
+      isInteriorOpen = !isInteriorOpen;
+      if (isInteriorOpen) {
+        if (peri) peri.group.visible = false;
+        front.group.visible = true;
+        front.isManuallyMoved = true;
+        front.targetPosition.copy(front.homePosition).add(new THREE.Vector3(-0.23, 0.0, 0.08));
+        elOpenInteriorLabel.textContent = 'Cerrar Pared';
+        const inner = activeParts.find((p) => p.id === 'cuerpo_interno');
+        if (inner) selectPart(inner);
+      } else {
+        front.group.visible = true;
+        front.isManuallyMoved = false;
+        front.targetPosition.copy(front.homePosition);
+        front.targetQuaternion.copy(front.homeQuaternion);
+        elOpenInteriorLabel.textContent = 'Abrir Interior';
+        selectPart(front);
+      }
+    }
+
+    function focusOnCoronaryVeins() {
+      // Ensure anterior wall with 3D coronary arteries & veins is assembled & unobstructed
+      const peri = activeParts.find((p) => p.id === 'pericardio');
+      const front = activeParts.find((p) => p.id === 'pared_anterior');
+      if (peri) peri.group.visible = false;
+      if (front) {
+        front.group.visible = true;
+        front.isManuallyMoved = false;
+        front.targetPosition.copy(front.homePosition);
+        front.targetQuaternion.copy(front.homeQuaternion);
+        selectPart(front);
+      }
+      isInteriorOpen = false;
+      elOpenInteriorLabel.textContent = 'Abrir Interior';
+      elLayerSlider.value = 4;
+      dissectionLevel = 4;
+      elLayerStepText.textContent = 'Enfoque Macro · Venas 3D';
+
+      // Smoothly zoom camera right onto the 3D coronary arteries, veins & fat sulcus
+      animateCameraTo(
+        new THREE.Vector3(0.08, 1.32, 0.255),
+        new THREE.Vector3(0.015, 1.315, 0.055)
+      );
+      showToast('Enfocando red 3D de arterias coronarias, venas cardíacas y grasa epicárdica.');
+    }
+
+    function toggleHeartbeat() {
+      heartbeatEnabled = !heartbeatEnabled;
+      const label = document.getElementById('heartbeat-label');
+      const dot = document.getElementById('pulse-dot');
+      const headerPulse = document.getElementById('header-pulse');
+      if (heartbeatEnabled) {
+        label.textContent = 'Latido 72 BPM';
+        dot.classList.add('animate-ping');
+        headerPulse.classList.add('animate-pulse');
+      } else {
+        label.textContent = 'Latido Pausado';
+        dot.classList.remove('animate-ping');
+        headerPulse.classList.remove('animate-pulse');
+      }
+    }
+
+    // Bind HUD Controls
+    document.getElementById('btn-explode').addEventListener('click', () => setExplodedState(!isExploded));
+    document.getElementById('btn-open-interior').addEventListener('click', () => toggleOpenInterior());
+    document.getElementById('btn-focus-veins').addEventListener('click', () => focusOnCoronaryVeins());
+    document.getElementById('btn-assemble').addEventListener('click', () => reassembleAll());
+    document.getElementById('btn-heartbeat').addEventListener('click', () => toggleHeartbeat());
+    elLayerSlider.addEventListener('input', (e) => setDissectionLevel(e.target.value));
+
+    document.querySelectorAll('.part-pill').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = btn.getAttribute('data-part-id');
+        const part = activeParts.find((p) => p.id === id);
+        if (!part) return;
+        part.group.visible = !part.group.visible;
+        if (part.group.visible) selectPart(part);
+      });
+    });
+
+    // =========================================================================
+    // 7. DESKTOP & MOBILE MOUSE/TOUCH 3D DRAG-AND-DETACH INTERACTION
+    // =========================================================================
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+    const dragPlane = new THREE.Plane();
+    const dragIntersection = new THREE.Vector3();
+    const dragOffset = new THREE.Vector3();
+    let draggedPart = null;
+
+    function updatePointerNDC(clientX, clientY) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+    }
+
+    function raycastParts() {
+      raycaster.setFromCamera(pointer, camera);
+      const visibleMeshes = interactiveMeshes.filter((m) => m.userData.partObj?.group.visible);
+      const hits = raycaster.intersectObjects(visibleMeshes, false);
+      return hits.length > 0 ? hits[0] : null;
+    }
+
+    renderer.domElement.addEventListener('pointerdown', (e) => {
+      if (renderer.xr.isPresenting) return;
+      if (e.button !== 0 && e.pointerType === 'mouse') return;
+
+      updatePointerNDC(e.clientX, e.clientY);
+      const hit = raycastParts();
+      if (hit) {
+        camAnim = null;
+        controls.enabled = false;
+        const partObj = hit.object.userData.partObj;
+        draggedPart = partObj;
+        partObj.isGrabbed = true;
+        partObj.isManuallyMoved = true;
+        selectPart(partObj);
+
+        const camDir = new THREE.Vector3();
+        camera.getWorldDirection(camDir);
+        dragPlane.setFromNormalAndCoplanarPoint(camDir.negate(), hit.point);
+
+        const localHit = heartRoot.worldToLocal(hit.point.clone());
+        dragOffset.copy(partObj.group.position).sub(localHit);
+        renderer.domElement.style.cursor = 'grabbing';
+      }
+    });
+
+    window.addEventListener('pointermove', (e) => {
+      if (renderer.xr.isPresenting) return;
+      updatePointerNDC(e.clientX, e.clientY);
+
+      if (draggedPart) {
+        raycaster.setFromCamera(pointer, camera);
+        if (raycaster.ray.intersectPlane(dragPlane, dragIntersection)) {
+          const localTarget = heartRoot.worldToLocal(dragIntersection.clone()).add(dragOffset);
+          draggedPart.targetPosition.copy(localTarget);
+          draggedPart.group.position.copy(localTarget);
+        }
+        return;
+      }
+
+      const hit = raycastParts();
+      const newHover = hit ? hit.object.userData.partObj : null;
+      if (newHover !== hoveredPart) {
+        hoveredPart = newHover;
+        renderer.domElement.style.cursor = hoveredPart ? 'grab' : 'default';
+        applyHighlight();
+      }
+    });
+
+    window.addEventListener('pointerup', () => {
+      if (draggedPart) {
+        draggedPart.isGrabbed = false;
+        draggedPart = null;
+        controls.enabled = true;
+        renderer.domElement.style.cursor = hoveredPart ? 'grab' : 'default';
+        applyHighlight();
+      }
+    });
+
+    // =========================================================================
+    // 8. WEBXR FLOATING 3D PANEL & INTERACTIVE 3D VR BUTTONS (META QUEST)
+    // =========================================================================
+    const vrUIGroup = new THREE.Group();
+    vrUIGroup.position.set(0.46, 1.32, -0.44);
+    vrUIGroup.rotation.y = -0.42;
+    vrUIGroup.visible = false;
+    scene.add(vrUIGroup);
+
+    const vrPanelCanvas = document.createElement('canvas');
+    vrPanelCanvas.width = 1024;
+    vrPanelCanvas.height = 768;
+    const vrCtx = vrPanelCanvas.getContext('2d');
+    const vrPanelTex = new THREE.CanvasTexture(vrPanelCanvas);
+    vrPanelTex.colorSpace = THREE.SRGBColorSpace;
+
+    const vrPanelMesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.58, 0.435),
+      new THREE.MeshBasicMaterial({ map: vrPanelTex, transparent: true })
+    );
+    vrUIGroup.add(vrPanelMesh);
+
+    function wrapText(ctx, text, x, y, maxW, lineH) {
+      const words = text.split(' ');
+      let line = '';
+      let cy = y;
+      for (let i = 0; i < words.length; i++) {
+        const test = line + words[i] + ' ';
+        if (ctx.measureText(test).width > maxW && i > 0) {
+          ctx.fillText(line, x, cy);
+          line = words[i] + ' ';
+          cy += lineH;
+        } else {
+          line = test;
+        }
+      }
+      ctx.fillText(line, x, cy);
+    }
+
+    function updateVRInfoPanel(meta) {
+      const w = vrPanelCanvas.width;
+      const h = vrPanelCanvas.height;
+      vrCtx.clearRect(0, 0, w, h);
+
+      vrCtx.fillStyle = 'rgba(9, 14, 26, 0.94)';
+      vrCtx.beginPath();
+      vrCtx.roundRect(14, 14, w - 28, h - 28, 36);
+      vrCtx.fill();
+
+      vrCtx.strokeStyle = 'rgba(56, 189, 248, 0.65)';
+      vrCtx.lineWidth = 5;
+      vrCtx.stroke();
+
+      vrCtx.fillStyle = '#38bdf8';
+      vrCtx.font = 'bold 28px Inter, sans-serif';
+      vrCtx.fillText(meta.layerBadge.toUpperCase(), 54, 82);
+
+      vrCtx.fillStyle = '#ffffff';
+      vrCtx.font = 'bold 42px Inter, sans-serif';
+      wrapText(vrCtx, meta.name, 54, 146, w - 108, 50);
+
+      vrCtx.fillStyle = meta.flowColor || '#f43f5e';
+      vrCtx.font = '600 30px Inter, sans-serif';
+      vrCtx.fillText(`Sangre / Flujo: ${meta.flowType}`, 54, 268);
+
+      vrCtx.strokeStyle = 'rgba(148, 163, 184, 0.32)';
+      vrCtx.lineWidth = 2;
+      vrCtx.beginPath();
+      vrCtx.moveTo(54, 300);
+      vrCtx.lineTo(w - 54, 300);
+      vrCtx.stroke();
+
+      vrCtx.fillStyle = '#e2e8f0';
+      vrCtx.font = '400 30px Inter, sans-serif';
+      wrapText(vrCtx, meta.functionText, 54, 355, w - 108, 43);
+
+      vrCtx.fillStyle = '#94a3b8';
+      vrCtx.font = 'italic 23px Inter, sans-serif';
+      vrCtx.fillText('Pellizca (índice + pulgar) cualquier capa para separarla y rotarla 360°', 54, h - 46);
+
+      vrPanelTex.needsUpdate = true;
+    }
+
+    const vrButtons = [];
+    function createVRButton(label, xPos, bgHex, onPress) {
+      const c = document.createElement('canvas');
+      c.width = 320;
+      c.height = 104;
+      const ctx = c.getContext('2d');
+
+      ctx.fillStyle = bgHex;
+      ctx.beginPath();
+      ctx.roundRect(6, 6, 308, 92, 22);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 30px Inter, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, 160, 52);
+
+      const tex = new THREE.CanvasTexture(c);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      const mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(0.135, 0.046, 0.016),
+        new THREE.MeshStandardMaterial({ map: tex, roughness: 0.3 })
+      );
+      mesh.position.set(xPos, -0.265, 0.01);
+      mesh.userData.vrButton = { onPress };
+      vrUIGroup.add(mesh);
+      vrButtons.push({ mesh, onPress, cooldown: 0 });
+    }
+
+    createVRButton('Explotar', -0.215, '#0369a1', () => setExplodedState(!isExploded));
+    createVRButton('Reensamblar', -0.072, '#047857', () => reassembleAll());
+    createVRButton('Capas', 0.072, '#b45309', () => {
+      const next = dissectionLevel > 1 ? dissectionLevel - 1 : 5;
+      setDissectionLevel(next);
+    });
+    createVRButton('Latido', 0.215, '#be123c', () => toggleHeartbeat());
+
+    // Apply initial clean view (Level 4: raised 3D veins & arteries immediately visible)
+    setDissectionLevel(4);
+
+    // =========================================================================
+    // 9. META QUEST WEBXR: XRButton + NATIVE HAND TRACKING + CONTROLLER FALLBACK
+    // =========================================================================
+    const xrButtonSlot = document.getElementById('xr-button-slot');
+    const xrButton = XRButton.createButton(renderer, {
+      optionalFeatures: ['hand-tracking', 'local-floor', 'bounded-floor']
+    });
+    xrButtonSlot.appendChild(xrButton);
+
+    renderer.xr.addEventListener('sessionstart', () => {
+      vrUIGroup.visible = true;
+      heartRoot.position.set(0, 1.28, -0.44);
+      standGroup.position.set(0, 1.08, -0.44);
+      vrUIGroup.position.set(0.46, 1.32, -0.44);
+    });
+
+    renderer.xr.addEventListener('sessionend', () => {
+      vrUIGroup.visible = false;
+      heartRoot.position.set(0, 1.34, 0);
+      standGroup.position.set(0, 1.14, 0);
+    });
+
+    // Native Hand Tracking (Pinch index + thumb to grab & rotate 360°)
+    const handModelFactory = new XRHandModelFactory();
+    const hands = [];
+
+    for (let i = 0; i < 2; i++) {
+      const hand = renderer.xr.getHand(i);
+      hand.add(handModelFactory.createHandModel(hand, 'mesh'));
+      scene.add(hand);
+
+      const tipCursor = new THREE.Mesh(
+        new THREE.SphereGeometry(0.007, 16, 16),
+        new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.85 })
+      );
+      tipCursor.visible = false;
+      scene.add(tipCursor);
+
+      hands.push({
+        hand,
+        tipCursor,
+        isPinching: false,
+        grabbedPart: null,
+        grabLocalOffset: new THREE.Vector3(),
+        grabInvHandQuat: new THREE.Quaternion(),
+        grabStartPartQuat: new THREE.Quaternion()
+      });
+    }
+
+    // Standard VR Controllers Raycast Fallback
+    const controllers = [];
+    const xrRaycaster = new THREE.Raycaster();
+    const tempMatrix = new THREE.Matrix4();
+
+    for (let i = 0; i < 2; i++) {
+      const ctrl = renderer.xr.getController(i);
+      const laserGeo = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, 0, 0),
+        new THREE.Vector3(0, 0, -1.5)
+      ]);
+      ctrl.add(
+        new THREE.Line(
+          laserGeo,
+          new THREE.LineBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.65 })
+        )
+      );
+      scene.add(ctrl);
+
+      const state = {
+        ctrl,
+        grabbedPart: null,
+        grabDistance: 0.4,
+        grabInvCtrlQuat: new THREE.Quaternion(),
+        grabStartPartQuat: new THREE.Quaternion()
+      };
+
+      ctrl.addEventListener('selectstart', () => {
+        tempMatrix.identity().extractRotation(ctrl.matrixWorld);
+        xrRaycaster.ray.origin.setFromMatrixPosition(ctrl.matrixWorld);
+        xrRaycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+
+        const btnHits = xrRaycaster.intersectObjects(
+          vrButtons.map((b) => b.mesh),
+          false
+        );
+        if (btnHits.length > 0) {
+          btnHits[0].object.userData.vrButton.onPress();
+          return;
+        }
+
+        const visibleMeshes = interactiveMeshes.filter((m) => m.userData.partObj?.group.visible);
+        const hits = xrRaycaster.intersectObjects(visibleMeshes, false);
+        if (hits.length > 0) {
+          const part = hits[0].object.userData.partObj;
+          state.grabbedPart = part;
+          state.grabDistance = hits[0].distance;
+          part.isGrabbed = true;
+          part.isManuallyMoved = true;
+
+          const ctrlQuat = new THREE.Quaternion();
+          ctrl.getWorldQuaternion(ctrlQuat);
+          state.grabInvCtrlQuat.copy(ctrlQuat).invert();
+          state.grabStartPartQuat.copy(part.group.quaternion);
+          selectPart(part);
+        }
+      });
+
+      ctrl.addEventListener('selectend', () => {
+        if (state.grabbedPart) {
+          state.grabbedPart.isGrabbed = false;
+          state.grabbedPart = null;
+          applyHighlight();
+        }
+      });
+
+      controllers.push(state);
+    }
+
+    const _indexPos = new THREE.Vector3();
+    const _thumbPos = new THREE.Vector3();
+    const _pinchMid = new THREE.Vector3();
+    const _handQuat = new THREE.Quaternion();
+    const _deltaQuat = new THREE.Quaternion();
+    const _box3 = new THREE.Box3();
+
+    function updateWebXRInteraction(dt) {
+      if (!renderer.xr.isPresenting) return;
+
+      vrButtons.forEach((b) => {
+        if (b.cooldown > 0) b.cooldown = Math.max(0, b.cooldown - dt);
+      });
+
+      hands.forEach((hState) => {
+        const { hand, tipCursor } = hState;
+        const indexTip = hand.joints['index-finger-tip'];
+        const thumbTip = hand.joints['thumb-tip'];
+        const wrist = hand.joints['wrist'];
+
+        if (!indexTip || !thumbTip || indexTip.position.lengthSq() === 0) {
+          tipCursor.visible = false;
+          return;
+        }
+
+        indexTip.getWorldPosition(_indexPos);
+        thumbTip.getWorldPosition(_thumbPos);
+        _pinchMid.addVectors(_indexPos, _thumbPos).multiplyScalar(0.5);
+
+        if (wrist) {
+          wrist.getWorldQuaternion(_handQuat);
+        } else {
+          indexTip.getWorldQuaternion(_handQuat);
+        }
+
+        tipCursor.visible = true;
+        tipCursor.position.copy(_indexPos);
+
+        // Index finger poke on 3D VR HUD buttons
+        vrButtons.forEach((btn) => {
+          if (btn.cooldown <= 0) {
+            _box3.setFromObject(btn.mesh).expandByScalar(0.014);
+            if (_box3.containsPoint(_indexPos)) {
+              btn.cooldown = 0.6;
+              btn.mesh.scale.setScalar(0.92);
+              btn.onPress();
+              setTimeout(() => btn.mesh.scale.setScalar(1), 150);
+            }
+          }
+        });
+
+        const pinchDist = _indexPos.distanceTo(_thumbPos);
+        const pinchingNow = pinchDist < 0.028;
+
+        if (pinchingNow && !hState.isPinching) {
+          let closestPart = null;
+          let minDist = 0.095;
+
+          activeParts.forEach((part) => {
+            if (!part.group.visible) return;
+            _box3.setFromObject(part.group);
+            if (_box3.isEmpty()) return;
+            const d = _box3.distanceToPoint(_pinchMid);
+            if (d < minDist) {
+              minDist = d;
+              closestPart = part;
+            }
+          });
+
+          if (closestPart) {
+            hState.grabbedPart = closestPart;
+            closestPart.isGrabbed = true;
+            closestPart.isManuallyMoved = true;
+
+            const localPinch = heartRoot.worldToLocal(_pinchMid.clone());
+            hState.grabLocalOffset.copy(closestPart.group.position).sub(localPinch);
+            hState.grabInvHandQuat.copy(_handQuat).invert();
+            hState.grabStartPartQuat.copy(closestPart.group.quaternion);
+
+            tipCursor.material.color.setHex(0x10b981);
+            selectPart(closestPart);
+          }
+        } else if (pinchingNow && hState.grabbedPart) {
+          const localPinch = heartRoot.worldToLocal(_pinchMid.clone());
+          const nextPos = localPinch.add(hState.grabLocalOffset);
+          hState.grabbedPart.targetPosition.copy(nextPos);
+          hState.grabbedPart.group.position.copy(nextPos);
+
+          _deltaQuat.copy(_handQuat).multiply(hState.grabInvHandQuat);
+          hState.grabbedPart.group.quaternion.copy(_deltaQuat).multiply(hState.grabStartPartQuat);
+          hState.grabbedPart.targetQuaternion.copy(hState.grabbedPart.group.quaternion);
+        } else if (!pinchingNow && hState.isPinching) {
+          if (hState.grabbedPart) {
+            hState.grabbedPart.isGrabbed = false;
+            hState.grabbedPart = null;
+            applyHighlight();
+          }
+          tipCursor.material.color.setHex(0x38bdf8);
+        }
+
+        hState.isPinching = pinchingNow;
+      });
+
+      // Controller Fallback Grab
+      controllers.forEach((cState) => {
+        if (!cState.grabbedPart) return;
+        const { ctrl, grabbedPart, grabDistance } = cState;
+        tempMatrix.identity().extractRotation(ctrl.matrixWorld);
+        const origin = new THREE.Vector3().setFromMatrixPosition(ctrl.matrixWorld);
+        const dir = new THREE.Vector3(0, 0, -1).applyMatrix4(tempMatrix);
+        const localTarget = heartRoot.worldToLocal(origin.addScaledVector(dir, grabDistance));
+
+        grabbedPart.group.position.copy(localTarget);
+        grabbedPart.targetPosition.copy(localTarget);
+
+        const ctrlQuat = new THREE.Quaternion();
+        ctrl.getWorldQuaternion(ctrlQuat);
+        _deltaQuat.copy(ctrlQuat).multiply(cState.grabInvCtrlQuat);
+        grabbedPart.group.quaternion.copy(_deltaQuat).multiply(cState.grabStartPartQuat);
+        grabbedPart.targetQuaternion.copy(grabbedPart.group.quaternion);
+      });
+    }
+
+    // =========================================================================
+    // 10. PHYSIOLOGICAL 72 BPM CARDIAC PULSE & 60FPS ANIMATION LOOP
+    // =========================================================================
+    const clock = new THREE.Clock();
+
+    function computeCardiacPulse(t) {
+      const phase = (t * 1.2) % 1.0; // 72 BPM = 1.2 Hz Lub-Dub
+      const systole = Math.exp(-Math.pow((phase - 0.16) / 0.055, 2));
+      const diastoleKick = 0.45 * Math.exp(-Math.pow((phase - 0.34) / 0.05, 2));
+      return systole + diastoleKick;
+    }
+
+    function animate() {
+      const dt = Math.min(clock.getDelta(), 0.05);
+      const elapsed = clock.getElapsedTime();
+
+      updateWebXRInteraction(dt);
+
+      const lerpAlpha = 1 - Math.exp(-8.5 * dt);
+      const pulse = heartbeatEnabled ? computeCardiacPulse(elapsed) : 0;
+
+      activeParts.forEach((part) => {
+        if (!part.isGrabbed) {
+          part.group.position.lerp(part.targetPosition, lerpAlpha);
+          part.group.quaternion.slerp(part.targetQuaternion, lerpAlpha);
+
+          if (heartbeatEnabled) {
+            const amp = part.isManuallyMoved || isExploded ? 0.010 : 0.028;
+            const s = 1.0 + pulse * amp;
+            part.group.scale.set(s, 1.0 + pulse * amp * 0.72, s);
+          } else {
+            part.group.scale.lerp(new THREE.Vector3(1, 1, 1), 0.15);
+          }
+        } else {
+          part.group.scale.lerp(new THREE.Vector3(1, 1, 1), 0.25);
+        }
+      });
+
+      if (!renderer.xr.isPresenting) {
+        // Smooth camera transition for "Enfocar Venas" & "Reensamblar"
+        if (camAnim) {
+          const camAlpha = 1 - Math.exp(-6.0 * dt);
+          camera.position.lerp(camAnim.pos, camAlpha);
+          controls.target.lerp(camAnim.target, camAlpha);
+          if (
+            camera.position.distanceTo(camAnim.pos) < 0.002 &&
+            controls.target.distanceTo(camAnim.target) < 0.002
+          ) {
+            camAnim = null;
+          }
+        }
+        controls.update();
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    window.onload = function () {
+      renderer.setAnimationLoop(animate);
+    };
+  </script>
+</body>
+</html>
